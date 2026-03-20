@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    android:keepScreenOn="true">
+
+    <com.padelboard.ScoreboardView
+        android:id="@+id/scoreboardView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- IP overlay that fades out -->
+    <TextView
+        android:id="@+id/ipOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:textColor="#88FFFFFF"
+        android:textSize="14sp"
+        android:background="#44000000"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:text="Loading..." />
+
+</FrameLayout>

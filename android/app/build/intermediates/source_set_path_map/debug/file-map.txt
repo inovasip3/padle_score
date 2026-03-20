@@ -1,0 +1,7 @@
+com.padelboard.app-pngs-0 X:\AIDEV\Padle_Score\android\app\build\generated\res\pngs\debug
+com.padelboard.app-resValues-1 X:\AIDEV\Padle_Score\android\app\build\generated\res\resValues\debug
+com.padelboard.app-packageDebugResources-2 X:\AIDEV\Padle_Score\android\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.padelboard.app-packageDebugResources-3 X:\AIDEV\Padle_Score\android\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.padelboard.app-merged_res-4 X:\AIDEV\Padle_Score\android\app\build\intermediates\merged_res\debug
+com.padelboard.app-debug-5 X:\AIDEV\Padle_Score\android\app\src\debug\res
+com.padelboard.app-main-6 X:\AIDEV\Padle_Score\android\app\src\main\res
