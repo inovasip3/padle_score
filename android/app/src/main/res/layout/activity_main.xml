@@ -11,18 +11,32 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- IP overlay that fades out -->
-    <TextView
-        android:id="@+id/ipOverlay"
+    <!-- Bottom overlay for QR and IP -->
+    <LinearLayout
+        android:id="@+id/bottomInfoLayout"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="16dp"
-        android:textColor="#88FFFFFF"
-        android:textSize="14sp"
+        android:orientation="vertical"
+        android:gravity="center"
         android:background="#44000000"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="6dp"
-        android:text="Loading..." />
+        android:padding="16dp">
+
+        <ImageView
+            android:id="@+id/qrCodeView"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            android:layout_marginBottom="8dp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/ipOverlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#88FFFFFF"
+            android:textSize="14sp"
+            android:text="Loading..." />
+    </LinearLayout>
 
 </FrameLayout>

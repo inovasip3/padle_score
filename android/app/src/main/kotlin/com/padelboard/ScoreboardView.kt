@@ -245,9 +245,130 @@ class ScoreboardView @JvmOverloads constructor(
         }
     }
 
+    // --- Touch callbcks ---
+    var onNameTap: ((Char) -> Unit)? = null
+    var onScoreTap: ((Char) -> Unit)? = null
+    var onScoreLongPress: ((Char) -> Unit)? = null
+    var onResetLongPress: (() -> Unit)? = null
+
+    // Touch handling state
+    private var lastDownX = 0f
+    private var lastDownY = 0f
+    private var lastDownTime = 0L
+    private val LONG_PRESS_TIMEOUT = 1000L
+    
+    // Multi-touch reset state
+    private var pointersDown = 0
+    private var pointer1X = 0f
+    private var pointer2X = 0f
+    private var resetRunnableRegistered = false
+
+    private val longPressRunnable = Runnable {
+        // Triggered if single finger held
+        if (pointersDown == 1) {
+            val h = height.toFloat()
+            val w = width.toFloat()
+            val scoreYBase = h * 0.60f
+            val scoreSize = h * 0.38f
+            val scoreTop = scoreYBase - scoreSize
+            val scoreBottom = scoreYBase + (scoreSize * 0.2f)
+            
+            if (lastDownY in scoreTop..scoreBottom) {
+                if (lastDownX < w / 2f) {
+                    onScoreLongPress?.invoke('A')
+                } else {
+                    onScoreLongPress?.invoke('B')
+                }
+            }
+        }
+    }
+
+    private val resetLongPressRunnable = Runnable {
+        if (pointersDown >= 2) {
+            // Check if one pointer is left side and one is right side
+            val w = width.toFloat()
+            val halfW = w / 2f
+            if ((pointer1X < halfW && pointer2X > halfW) || (pointer1X > halfW && pointer2X < halfW)) {
+                onResetLongPress?.invoke()
+            }
+        }
+    }
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        pointersDown = event.pointerCount
+        val action = event.actionMasked
+
+        when (action) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                lastDownX = event.x
+                lastDownY = event.y
+                lastDownTime = System.currentTimeMillis()
+                pointer1X = event.x
+                postDelayed(longPressRunnable, LONG_PRESS_TIMEOUT)
+            }
+            android.view.MotionEvent.ACTION_POINTER_DOWN -> {
+                removeCallbacks(longPressRunnable) // Cancel single touch long press
+                if (pointersDown == 2) {
+                    pointer2X = event.getX(1)
+                    postDelayed(resetLongPressRunnable, LONG_PRESS_TIMEOUT)
+                    resetRunnableRegistered = true
+                }
+            }
+            android.view.MotionEvent.ACTION_UP -> {
+                removeCallbacks(longPressRunnable)
+                if (resetRunnableRegistered) {
+                    removeCallbacks(resetLongPressRunnable)
+                    resetRunnableRegistered = false
+                }
+                
+                // If it was a quick tap, process it
+                if (pointersDown == 1 && System.currentTimeMillis() - lastDownTime < LONG_PRESS_TIMEOUT) {
+                    val x = event.x
+                    val y = event.y
+                    val w = width.toFloat()
+                    val h = height.toFloat()
+                    val halfW = w / 2f
+
+                    // Hit zones
+                    val teamNameYBase = h * 0.12f
+                    val teamNameSize = h * 0.07f
+                    val nameTop = teamNameYBase - teamNameSize
+                    val nameBottom = teamNameYBase + (teamNameSize * 0.2f)
+
+                    val scoreYBase = h * 0.60f
+                    val scoreSize = h * 0.38f
+                    val scoreTop = scoreYBase - scoreSize
+                    val scoreBottom = scoreYBase + (scoreSize * 0.2f)
+
+                    if (y in nameTop..nameBottom) {
+                        onNameTap?.invoke(if (x < halfW) 'A' else 'B')
+                    } else if (y in scoreTop..scoreBottom) {
+                        onScoreTap?.invoke(if (x < halfW) 'A' else 'B')
+                    }
+                }
+            }
+            android.view.MotionEvent.ACTION_POINTER_UP -> {
+                if (resetRunnableRegistered) {
+                    removeCallbacks(resetLongPressRunnable)
+                    resetRunnableRegistered = false
+                }
+            }
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(longPressRunnable)
+                if (resetRunnableRegistered) {
+                    removeCallbacks(resetLongPressRunnable)
+                    resetRunnableRegistered = false
+                }
+            }
+        }
+        return true
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         glowAnimatorA?.cancel()
         glowAnimatorB?.cancel()
+        removeCallbacks(longPressRunnable)
+        removeCallbacks(resetLongPressRunnable)
     }
 }

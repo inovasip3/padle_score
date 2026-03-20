@@ -16,6 +16,11 @@ import android.app.Activity
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.Collections
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.graphics.Bitmap
+import com.google.zxing.BarcodeFormat
+import com.journeyapps.barcodescanner.BarcodeEncoder
 
 /**
  * Main kiosk activity.
@@ -29,6 +34,8 @@ class MainActivity : Activity() {
 
     private lateinit var scoreboardView: ScoreboardView
     private lateinit var ipOverlay: TextView
+    private lateinit var qrCodeView: ImageView
+    private lateinit var bottomInfoLayout: LinearLayout
     private lateinit var config: ConfigManager
     private lateinit var scoreState: ScoreState
 
@@ -67,6 +74,8 @@ class MainActivity : Activity() {
         scoreState = ScoreState()
         scoreboardView = findViewById(R.id.scoreboardView)
         ipOverlay = findViewById(R.id.ipOverlay)
+        qrCodeView = findViewById(R.id.qrCodeView)
+        bottomInfoLayout = findViewById(R.id.bottomInfoLayout)
 
         // Apply config
         applyConfig()
@@ -78,6 +87,9 @@ class MainActivity : Activity() {
 
         // Initial scoreboard render
         refreshScoreboard()
+        
+        // Wire up touch events for local controls
+        setupTouchControls()
 
         // Enter immersive mode
         enterImmersiveMode()
@@ -114,6 +126,61 @@ class MainActivity : Activity() {
             newStatus = scoreState.getStatusText(),
             changedTeam = changedTeam
         )
+        updateBottomInfoVisibility()
+    }
+    
+    private fun updateBottomInfoVisibility() {
+        // Show QR code and IP only when the score is 0-0 in points and sets
+        val isStarted = scoreState.setsA > 0 || scoreState.setsB > 0 || 
+                        scoreState.getScoreDisplayA() != "0" || scoreState.getScoreDisplayB() != "0"
+        
+        if (!isStarted) {
+            bottomInfoLayout.visibility = View.VISIBLE
+            bottomInfoLayout.alpha = 1f
+            // Generate QR once
+            if (qrCodeView.drawable == null) {
+                generateQrCode()
+            }
+        } else {
+            bottomInfoLayout.visibility = View.GONE
+        }
+    }
+    
+    private fun generateQrCode() {
+        val ip = getLocalIpAddress()
+        if (ip != null) {
+            try {
+                val url = "http://$ip:${config.serverPort}/"
+                val barcodeEncoder = BarcodeEncoder()
+                val bitmap: Bitmap = barcodeEncoder.encodeBitmap(url, BarcodeFormat.QR_CODE, 400, 400)
+                qrCodeView.setImageBitmap(bitmap)
+                qrCodeView.visibility = View.VISIBLE
+            } catch (e: Exception) {
+                e.printStackTrace()
+                qrCodeView.visibility = View.GONE
+            }
+        }
+    }
+    
+    private fun setupTouchControls() {
+        scoreboardView.onNameTap = { team ->
+            openConfig()
+        }
+        
+        scoreboardView.onScoreTap = { team ->
+            if (team == 'A') scoreState.addPoint('A') else scoreState.addPoint('B')
+            refreshScoreboard(team)
+        }
+        
+        scoreboardView.onScoreLongPress = { team ->
+            if (team == 'A') scoreState.removePoint('A') else scoreState.removePoint('B')
+            refreshScoreboard(team)
+        }
+        
+        scoreboardView.onResetLongPress = {
+            scoreState.reset()
+            refreshScoreboard()
+        }
     }
 
     // --- HTTP Server ---
@@ -121,7 +188,11 @@ class MainActivity : Activity() {
     private fun startServer() {
         try {
             httpServer?.stop()
-            httpServer = HttpCommandServer(config.serverPort, scoreState) { cmd ->
+            httpServer = HttpCommandServer(config.serverPort, scoreState, config) { cmd ->
+                if (cmd == "CONFIG_UPDATE") {
+                    handler.post { applyConfig(); refreshScoreboard() }
+                    return@HttpCommandServer
+                }
                 // Determine which team changed for animation
                 val team = when (cmd) {
                     "A_PLUS", "A_MINUS" -> 'A'
@@ -150,21 +221,11 @@ class MainActivity : Activity() {
         val ip = getLocalIpAddress()
         val port = config.serverPort
         ipOverlay.text = if (ip != null) {
-            "📡 $ip:$port"
+            "📱 Remote: http://$ip:$port"
         } else {
             "⚠️ No WiFi connection"
         }
-        ipOverlay.visibility = View.VISIBLE
-        ipOverlay.alpha = 1f
-
-        // Fade out after 10 seconds
-        handler.postDelayed({
-            ipOverlay.animate()
-                .alpha(0f)
-                .setDuration(2000)
-                .withEndAction { ipOverlay.visibility = View.GONE }
-                .start()
-        }, 10_000)
+        updateBottomInfoVisibility()
     }
 
     private fun getLocalIpAddress(): String? {
