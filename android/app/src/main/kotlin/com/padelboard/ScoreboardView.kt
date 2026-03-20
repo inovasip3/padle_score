@@ -256,6 +256,8 @@ class ScoreboardView @JvmOverloads constructor(
     private var lastDownY = 0f
     private var lastDownTime = 0L
     private val LONG_PRESS_TIMEOUT = 1000L
+    private var lastTapTimeMillis = 0L
+    private val TAP_DEBOUNCE_MS = 300L
     
     // Multi-touch reset state
     private var pointersDown = 0
@@ -323,27 +325,31 @@ class ScoreboardView @JvmOverloads constructor(
                 
                 // If it was a quick tap, process it
                 if (pointersDown == 1 && System.currentTimeMillis() - lastDownTime < LONG_PRESS_TIMEOUT) {
-                    val x = event.x
-                    val y = event.y
-                    val w = width.toFloat()
-                    val h = height.toFloat()
-                    val halfW = w / 2f
+                    val now = System.currentTimeMillis()
+                    if (now - lastTapTimeMillis >= TAP_DEBOUNCE_MS) {
+                        lastTapTimeMillis = now
+                        val x = event.x
+                        val y = event.y
+                        val w = width.toFloat()
+                        val h = height.toFloat()
+                        val halfW = w / 2f
 
-                    // Hit zones
-                    val teamNameYBase = h * 0.12f
-                    val teamNameSize = h * 0.07f
-                    val nameTop = teamNameYBase - teamNameSize
-                    val nameBottom = teamNameYBase + (teamNameSize * 0.2f)
+                        // Hit zones
+                        val teamNameYBase = h * 0.12f
+                        val teamNameSize = h * 0.07f
+                        val nameTop = teamNameYBase - teamNameSize
+                        val nameBottom = teamNameYBase + (teamNameSize * 0.2f)
 
-                    val scoreYBase = h * 0.60f
-                    val scoreSize = h * 0.38f
-                    val scoreTop = scoreYBase - scoreSize
-                    val scoreBottom = scoreYBase + (scoreSize * 0.2f)
+                        val scoreYBase = h * 0.60f
+                        val scoreSize = h * 0.38f
+                        val scoreTop = scoreYBase - scoreSize
+                        val scoreBottom = scoreYBase + (scoreSize * 0.2f)
 
-                    if (y in nameTop..nameBottom) {
-                        onNameTap?.invoke(if (x < halfW) 'A' else 'B')
-                    } else if (y in scoreTop..scoreBottom) {
-                        onScoreTap?.invoke(if (x < halfW) 'A' else 'B')
+                        if (y in nameTop..nameBottom) {
+                            onNameTap?.invoke(if (x < halfW) 'A' else 'B')
+                        } else if (y in scoreTop..scoreBottom) {
+                            onScoreTap?.invoke(if (x < halfW) 'A' else 'B')
+                        }
                     }
                 }
             }

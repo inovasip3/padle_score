@@ -59,7 +59,12 @@ class HttpCommandServer(
             "B_PLUS" -> scoreState.addPoint('B')
             "A_MINUS" -> scoreState.removePoint('A')
             "B_MINUS" -> scoreState.removePoint('B')
-            "RESET" -> scoreState.reset()
+            "RESET" -> {
+                scoreState.reset()
+                config.teamAName = ConfigManager.DEFAULT_TEAM_A
+                config.teamBName = ConfigManager.DEFAULT_TEAM_B
+                onCommand("CONFIG_UPDATE")
+            }
         }
 
         // Notify UI thread
@@ -209,6 +214,8 @@ class HttpCommandServer(
                     let touchTimer = null;
                     let isLongPress = false;
                     const LONG_PRESS_MS = 600;
+                    let lastTapTime = 0;
+                    const TAP_DEBOUNCE_MS = 300;
             
                     // Fetch state
                     async function fetchStatus() {
@@ -280,7 +287,11 @@ class HttpCommandServer(
                                 e.preventDefault();
                                 clearTimeout(touchTimer);
                                 if (!isLongPress && pointers < 2) {
-                                    sendCommand(cmdPlus);
+                                    let now = Date.now();
+                                    if (now - lastTapTime > TAP_DEBOUNCE_MS) {
+                                        lastTapTime = now;
+                                        sendCommand(cmdPlus);
+                                    }
                                 }
                             }, {passive: false});
                         });

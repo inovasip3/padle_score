@@ -13,6 +13,7 @@ import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
 import android.app.Activity
+import android.content.pm.PackageManager
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.Collections
@@ -35,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var scoreboardView: ScoreboardView
     private lateinit var ipOverlay: TextView
     private lateinit var qrCodeView: ImageView
+    private lateinit var versionText: TextView
     private lateinit var bottomInfoLayout: LinearLayout
     private lateinit var config: ConfigManager
     private lateinit var scoreState: ScoreState
@@ -75,7 +77,21 @@ class MainActivity : Activity() {
         scoreboardView = findViewById(R.id.scoreboardView)
         ipOverlay = findViewById(R.id.ipOverlay)
         qrCodeView = findViewById(R.id.qrCodeView)
+        versionText = findViewById(R.id.versionText)
         bottomInfoLayout = findViewById(R.id.bottomInfoLayout)
+        
+        // Set version text
+        try {
+            val versionName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionName
+            }
+            versionText.text = "Padle Score v.$versionName."
+        } catch (e: Exception) {
+            versionText.text = "Padle Score v.1.0.0."
+        }
 
         // Apply config
         applyConfig()
@@ -179,6 +195,9 @@ class MainActivity : Activity() {
         
         scoreboardView.onResetLongPress = {
             scoreState.reset()
+            config.teamAName = ConfigManager.DEFAULT_TEAM_A
+            config.teamBName = ConfigManager.DEFAULT_TEAM_B
+            applyConfig()
             refreshScoreboard()
         }
     }
