@@ -23,6 +23,7 @@ class ConfigManager(val context: Context) {
         private const val KEY_PIN = "pin"
         private const val KEY_ENABLE_HTTP = "enable_http_server"
         private const val KEY_ENABLE_BLE_HID = "enable_ble_hid"
+        private const val KEY_ENABLE_SHUTTER_REMOTE = "enable_shutter_remote"
         // --- Appearance ---
         private const val KEY_COLOR_A = "color_a"
         private const val KEY_COLOR_B = "color_b"
@@ -31,12 +32,16 @@ class ConfigManager(val context: Context) {
         private const val KEY_ENABLE_WIN_EFFECT = "enable_win_effect"
         private const val KEY_CUSTOM_THEME_JSON = "custom_theme_json"
         // --- Audio ---
+        private const val KEY_ENABLE_VOICE_REF = "enable_voice_ref"
         private const val KEY_SOUND_ENABLED = "sound_enabled"
+        private const val KEY_USE_LOVE_FOR_ZERO = "use_love_for_zero"
         
         // --- Photos ---
         private const val KEY_ENABLE_PHOTOS = "enable_photos"
         private const val KEY_PHOTO_SIZE = "photo_size"
         private const val KEY_PHOTO_Y_POS = "photo_y_pos"
+        private const val KEY_PHOTO_X_POS_A = "photo_x_pos_a" // Percentage from centerAX
+        private const val KEY_PHOTO_X_POS_B = "photo_x_pos_b" // Percentage from centerBX
         // --- Scoring Preset ---
         private const val KEY_SCORING_PRESET = "scoring_preset" // "standard", "golden_point", "fast_short", "custom_1", "custom_2", "custom_3"
         
@@ -77,14 +82,19 @@ class ConfigManager(val context: Context) {
         const val DEFAULT_COLOR_A = 0xFF00FF66.toInt()
         const val DEFAULT_COLOR_B = 0xFFFFA500.toInt()
         const val DEFAULT_SOUND_ENABLED = true
+        const val DEFAULT_USE_LOVE_FOR_ZERO = false
         const val DEFAULT_FONT_SCALE = 1.0f
         const val DEFAULT_FONT_TYPEFACE = "monospace"
         const val DEFAULT_ENABLE_WIN_EFFECT = true
         const val DEFAULT_ENABLE_PHOTOS = false
         const val DEFAULT_PHOTO_SIZE = 25 // Percentage size
         const val DEFAULT_PHOTO_Y_POS = 35 // Percentage Y-position
+        const val DEFAULT_PHOTO_X_POS_A = 0 // Relative to centerAX
+        const val DEFAULT_PHOTO_X_POS_B = 0 // Relative to centerBX
+        const val DEFAULT_ENABLE_VOICE_REF = true
         const val DEFAULT_ENABLE_HTTP = true
         const val DEFAULT_ENABLE_BLE_HID = true
+        const val DEFAULT_ENABLE_SHUTTER_REMOTE = true
         const val DEFAULT_SCORING_PRESET = "standard"
         
         const val DEFAULT_USE_GOLDEN_POINT = false
@@ -131,6 +141,10 @@ class ConfigManager(val context: Context) {
         get() = prefs.getBoolean(KEY_ENABLE_BLE_HID, DEFAULT_ENABLE_BLE_HID)
         set(value) = prefs.edit().putBoolean(KEY_ENABLE_BLE_HID, value).apply()
 
+    var enableShutterRemote: Boolean
+        get() = prefs.getBoolean(KEY_ENABLE_SHUTTER_REMOTE, DEFAULT_ENABLE_SHUTTER_REMOTE)
+        set(value) = prefs.edit().putBoolean(KEY_ENABLE_SHUTTER_REMOTE, value).apply()
+
     // --- Appearance ---
     var colorA: Int
         get() = prefs.getInt(KEY_COLOR_A, DEFAULT_COLOR_A)
@@ -162,9 +176,17 @@ class ConfigManager(val context: Context) {
         set(value) = prefs.edit().putString(KEY_CUSTOM_THEME_JSON, value).apply()
 
     // --- Audio ---
+    var enableVoiceRef: Boolean
+        get() = prefs.getBoolean(KEY_ENABLE_VOICE_REF, DEFAULT_ENABLE_VOICE_REF)
+        set(value) = prefs.edit().putBoolean(KEY_ENABLE_VOICE_REF, value).apply()
+
     var soundEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND_ENABLED, DEFAULT_SOUND_ENABLED)
         set(value) = prefs.edit().putBoolean(KEY_SOUND_ENABLED, value).apply()
+
+    var useLoveForZero: Boolean
+        get() = prefs.getBoolean(KEY_USE_LOVE_FOR_ZERO, DEFAULT_USE_LOVE_FOR_ZERO)
+        set(value) = prefs.edit().putBoolean(KEY_USE_LOVE_FOR_ZERO, value).apply()
         
     // --- Photos ---
     var enablePhotos: Boolean
@@ -178,6 +200,14 @@ class ConfigManager(val context: Context) {
     var photoYPos: Int
         get() = prefs.getInt(KEY_PHOTO_Y_POS, DEFAULT_PHOTO_Y_POS)
         set(value) = prefs.edit().putInt(KEY_PHOTO_Y_POS, value).apply()
+
+    var photoXPosA: Int
+        get() = prefs.getInt(KEY_PHOTO_X_POS_A, DEFAULT_PHOTO_X_POS_A)
+        set(value) = prefs.edit().putInt(KEY_PHOTO_X_POS_A, value).apply()
+
+    var photoXPosB: Int
+        get() = prefs.getInt(KEY_PHOTO_X_POS_B, DEFAULT_PHOTO_X_POS_B)
+        set(value) = prefs.edit().putInt(KEY_PHOTO_X_POS_B, value).apply()
 
     // --- Scoring Rules ---
     var scoringPreset: String

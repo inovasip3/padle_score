@@ -143,6 +143,8 @@ class MainActivity : Activity() {
         scoreboardView.enablePhotos = config.enablePhotos
         scoreboardView.photoSize = config.photoSize
         scoreboardView.photoYPos = config.photoYPos
+        scoreboardView.photoXPosA = config.photoXPosA
+        scoreboardView.photoXPosB = config.photoXPosB
         scoreboardView.reloadPhotos()
 
         // JSON theme overrides individual fields if valid
@@ -175,9 +177,11 @@ class MainActivity : Activity() {
         return try { android.graphics.Color.parseColor(value) } catch (e: Exception) { default }
     }
 
-    // Track sets to detect set win
+    // Track sets/games to detect wins
     private var lastSetsA = 0
     private var lastSetsB = 0
+    private var lastGamesA = 0
+    private var lastGamesB = 0
 
     private fun refreshScoreboard(changedTeam: Char? = null) {
         val currentSetsA = scoreState.setsA
@@ -201,21 +205,27 @@ class MainActivity : Activity() {
             changedTeam = changedTeam
         )
 
+        val gameWon = currentGamesA != lastGamesA || currentGamesB != lastGamesB
+
         if (changedTeam != null) {
             scoreboardView.shake()
+            
+            val winnerName = if (changedTeam == 'A') config.teamAName else config.teamBName
+            
             if (setWon) {
-                val winnerName = if (currentSetsA > lastSetsA) config.teamAName else config.teamBName
                 scoreboardView.celebrateSetWin(winnerName)
-                soundManager.playWinSet()
-            } else if (scoreState.isMatchPoint(changedTeam)) {
-                soundManager.playMatchPoint()
+                soundManager.announceSetWin(winnerName)
+            } else if (gameWon) {
+                soundManager.announceGameWin(winnerName, currentGamesA, currentGamesB)
             } else {
-                soundManager.playPoint()
+                soundManager.announceScore(scoreState.getScoreDisplayA(), scoreState.getScoreDisplayB(), scoreState.getStatusText())
             }
         }
         
         lastSetsA = currentSetsA
         lastSetsB = currentSetsB
+        lastGamesA = currentGamesA
+        lastGamesB = currentGamesB
         
         updateBottomInfoVisibility()
     }
@@ -418,10 +428,22 @@ class MainActivity : Activity() {
     }
 
     /**
-     * V2.0: BLE HID keyboard dispatch.
-     * Routes single-character keystrokes from the ESP32-C3 remote
-     * based on the user-configured key bindings in ConfigManager.
+     * V2.1: Advanced BLE / Bluetooth button logic.
+     * Supports 1-click for Team A, 2-clicks for Team B.
+     * Logic: Accumulate clicks within 500ms before executing.
      */
+    private var bleClickCount = 0
+    private var lastBleKey: String? = null
+    private val bleActionRunnable = Runnable {
+        when (bleClickCount) {
+            1 -> { scoreState.addPoint('A'); refreshScoreboard('A') }
+            2 -> { scoreState.addPoint('B'); refreshScoreboard('B') }
+            // Additional patterns can be added (e.g. 3 clicks for Undo/Reset)
+        }
+        bleClickCount = 0
+        lastBleKey = null
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (!config.enableBleHid) return super.dispatchKeyEvent(event)
         if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
@@ -429,13 +451,25 @@ class MainActivity : Activity() {
         val ch = event.unicodeChar.toChar().lowercaseChar().toString()
         if (ch.isBlank()) return super.dispatchKeyEvent(event)
 
-        when (ch) {
-            config.keyTeamAPlus  -> { scoreState.addPoint('A');    handler.post { refreshScoreboard('A') }; return true }
-            config.keyTeamAMinus -> { scoreState.removePoint('A'); handler.post { refreshScoreboard() };   return true }
-            config.keyTeamBPlus  -> { scoreState.addPoint('B');    handler.post { refreshScoreboard('B') }; return true }
-            config.keyTeamBMinus -> { scoreState.removePoint('B'); handler.post { refreshScoreboard() };   return true }
-            config.keyReset      -> { scoreState.reset(); applyConfig(); handler.post { refreshScoreboard() }; return true }
+        // If the key is one of the specialized keys (like A+), treat it as a generic trigger for multi-click logic
+        // or prioritize its dedicated function if it's NOT a standard cheap remote button.
+        // We will target the config.keyTeamAPlus as the main "Action Button" for cheap remotes.
+        
+        if (ch == config.keyTeamAPlus) {
+            handler.removeCallbacks(bleActionRunnable)
+            bleClickCount++
+            handler.postDelayed(bleActionRunnable, 500)
+            return true
         }
+
+        // Keep fallback for other keys
+        when (ch) {
+            config.keyTeamAMinus -> { scoreState.removePoint('A'); refreshScoreboard(); return true }
+            config.keyTeamBPlus  -> { scoreState.addPoint('B');    refreshScoreboard('B'); return true }
+            config.keyTeamBMinus -> { scoreState.removePoint('B'); refreshScoreboard(); return true }
+            config.keyReset      -> { scoreState.reset(); applyConfig(); refreshScoreboard(); return true }
+        }
+
         return super.dispatchKeyEvent(event)
     }
 

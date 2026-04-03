@@ -99,19 +99,31 @@ class HttpCommandServer(
                 val targetFile = java.io.File(config.context.filesDir, "team_${team.lowercase()}_photo.jpg")
                 tempFile.copyTo(targetFile, overwrite = true)
                 
-                // Keep file within reasonable size using a simple bitmap scaling down step
+                // Crop to square (center crop) and keep file within reasonable size
                 try {
                     val bmp = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath)
                     if (bmp != null) {
-                        val maxDim = 800
-                        if (bmp.width > maxDim || bmp.height > maxDim) {
-                            val ratio = Math.min(maxDim.toFloat() / bmp.width, maxDim.toFloat() / bmp.height)
-                            val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * ratio).toInt(), (bmp.height * ratio).toInt(), true)
-                            val out = java.io.FileOutputStream(targetFile)
-                            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                            out.close()
-                            scaled.recycle()
+                        val dim = Math.min(bmp.width, bmp.height)
+                        val xOffset = (bmp.width - dim) / 2
+                        val yOffset = (bmp.height - dim) / 2
+                        
+                        // Center crop to 1:1
+                        val croppedBmp = android.graphics.Bitmap.createBitmap(bmp, xOffset, yOffset, dim, dim)
+                        
+                        // Scale to target max size
+                        val maxDim = 600
+                        val finalBmp = if (dim > maxDim) {
+                             android.graphics.Bitmap.createScaledBitmap(croppedBmp, maxDim, maxDim, true)
+                        } else {
+                             croppedBmp
                         }
+
+                        val out = java.io.FileOutputStream(targetFile)
+                        finalBmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                        out.close()
+                        
+                        if (finalBmp != croppedBmp) finalBmp.recycle()
+                        if (croppedBmp != bmp) croppedBmp.recycle()
                         bmp.recycle()
                     }
                 } catch (e: Exception) { e.printStackTrace() }
@@ -133,8 +145,23 @@ class HttpCommandServer(
         
         val teamB = params["teamB"]
         if (teamB != null) config.teamBName = teamB
+
+        val pSize = params["photoSize"]?.toIntOrNull()
+        if (pSize != null) config.photoSize = pSize
+
+        val pY = params["photoYPos"]?.toIntOrNull()
+        if (pY != null) config.photoYPos = pY
         
-        if (teamA != null || teamB != null) {
+        val pXA = params["photoXPosA"]?.toIntOrNull()
+        if (pXA != null) config.photoXPosA = pXA
+        
+        val pXB = params["photoXPosB"]?.toIntOrNull()
+        if (pXB != null) config.photoXPosB = pXB
+
+        val pVoice = params["voiceRef"]?.toBoolean()
+        if (pVoice != null) config.enableVoiceRef = pVoice
+        
+        if (teamA != null || teamB != null || pSize != null || pY != null || pXA != null || pXB != null || pVoice != null) {
             onCommand("CONFIG_UPDATE")
         }
         
@@ -146,6 +173,11 @@ class HttpCommandServer(
         val state = scoreState.toMap().toMutableMap()
         state["teamA"] = config.teamAName
         state["teamB"] = config.teamBName
+        state["photoSize"] = config.photoSize
+        state["photoYPos"] = config.photoYPos
+        state["photoXPosA"] = config.photoXPosA
+        state["photoXPosB"] = config.photoXPosB
+        state["voiceRef"] = config.enableVoiceRef
         return state
     }
 
@@ -235,23 +267,70 @@ class HttpCommandServer(
                     }
                     .status {
                         position: absolute;
-                        bottom: 10%;
+                        bottom: 12%;
                         width: 100%;
                         text-align: center;
                         font-size: 24px;
                     }
+                    .photo-controls {
+                        background: #1a1a1a;
+                        padding: 15px;
+                        border-top: 1px solid #444;
+                        position: fixed;
+                        bottom: 0;
+                        width: 100%;
+                        display: none;
+                        box-sizing: border-box;
+                        z-index: 1000;
+                    }
+                    .photo-controls.visible { display: block; }
+                    .control-row {
+                        display: flex;
+                        align-items: center;
+                        margin-bottom: 12px;
+                    }
+                    .control-row label { flex: 1; font-size: 13px; color: #888; }
+                    .control-row input { flex: 2; margin-left: 10px; }
+                    .toggle-ctrl {
+                        position: fixed;
+                        bottom: 10px;
+                        right: 10px;
+                        background: #444;
+                        padding: 10px;
+                        border-radius: 50%;
+                        width: 40px;
+                        height: 40px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        z-index: 1001;
+                        font-size: 20px;
+                        cursor: pointer;
+                        box-shadow: 0 0 10px rgba(0,0,0,0.5);
+                    }
+                    .save-btn {
+                       background: #00FF66;
+                       color: #000;
+                       border: none;
+                       padding: 8px;
+                       width: 100%;
+                       font-weight: bold;
+                       border-radius: 4px;
+                       cursor: pointer;
+                    }
                 </style>
             </head>
             <body>
+                <div class="toggle-ctrl" onclick="toggleControls()">⚙️</div>
                 <div class="header">
                     <div>
                         <div id="nameA" class="team-name team-a">TEAM A</div>
-                        <label class="upload-btn" for="photoA">📸 Upload Photo A</label>
+                        <label class="upload-btn" for="photoA">📸 Photo A</label>
                         <input type="file" id="photoA" accept="image/*" style="display:none" onchange="uploadPhoto('A', this)">
                     </div>
                     <div>
                         <div id="nameB" class="team-name team-b">TEAM B</div>
-                        <label class="upload-btn" for="photoB">📸 Upload Photo B</label>
+                        <label class="upload-btn" for="photoB">📸 Photo B</label>
                         <input type="file" id="photoB" accept="image/*" style="display:none" onchange="uploadPhoto('B', this)">
                     </div>
                 </div>
@@ -266,6 +345,30 @@ class HttpCommandServer(
                     </div>
                 </div>
                 <div class="status" id="status"></div>
+                
+                <div class="photo-controls" id="photoControls">
+                    <div class="control-row">
+                        <label>🗣️ Voice Umpire</label>
+                        <input type="checkbox" id="voiceToggle" style="width:20px;height:20px" onchange="updatePosConfig()">
+                    </div>
+                    <div class="control-row">
+                        <label>📸 Photo Size</label>
+                        <input type="range" id="sizeRange" min="10" max="60" value="25" oninput="updatePosConfig()">
+                    </div>
+                    <div class="control-row">
+                        <label>↕️ Photo Y-Pos</label>
+                        <input type="range" id="yRange" min="0" max="100" value="35" oninput="updatePosConfig()">
+                    </div>
+                    <div class="control-row">
+                        <label>↔️ Team A X-Pos</label>
+                        <input type="range" id="xRangeA" min="-30" max="30" value="0" oninput="updatePosConfig()">
+                    </div>
+                    <div class="control-row">
+                        <label>↔️ Team B X-Pos</label>
+                        <input type="range" id="xRangeB" min="-30" max="30" value="0" oninput="updatePosConfig()">
+                    </div>
+                    <button class="save-btn" onclick="savePositions()">SAVE AS DEFAULT</button>
+                </div>
             
                 <script>
                     let pointers = 0;
@@ -309,10 +412,46 @@ class HttpCommandServer(
                         document.getElementById('status').innerText = state.status || "";
                         document.getElementById('nameA').innerText = state.teamA;
                         document.getElementById('nameB').innerText = state.teamB;
+                        
+                        // Sync sliders (only if not currently being touched)
+                        if(!window.isDragging) {
+                            document.getElementById('sizeRange').value = state.photoSize;
+                            document.getElementById('yRange').value = state.photoYPos;
+                            document.getElementById('xRangeA').value = state.photoXPosA;
+                            document.getElementById('xRangeB').value = state.photoXPosB;
+                            document.getElementById('voiceToggle').checked = state.voiceRef;
+                        }
                     }
             
                     setInterval(fetchStatus, 1000);
                     fetchStatus();
+                    
+                    const setupDrag = (id) => {
+                        document.getElementById(id).ontouchstart = () => window.isDragging = true;
+                        document.getElementById(id).ontouchend = () => window.isDragging = false;
+                    }
+                    setupDrag('sizeRange'); setupDrag('yRange'); setupDrag('xRangeA'); setupDrag('xRangeB');
+
+                    function toggleControls() {
+                        document.getElementById('photoControls').classList.toggle('visible');
+                    }
+
+                    async function updatePosConfig() {
+                        const size = document.getElementById('sizeRange').value;
+                        const y = document.getElementById('yRange').value;
+                        const xA = document.getElementById('xRangeA').value;
+                        const xB = document.getElementById('xRangeB').value;
+                        const voice = document.getElementById('voiceToggle').checked;
+                        try {
+                            const res = await fetch(`/config?photoSize=${'$'}{size}&photoYPos=${'$'}{y}&photoXPosA=${'$'}{xA}&photoXPosB=${'$'}{xB}&voiceRef=${'$'}{voice}`);
+                            const data = await res.json();
+                        } catch(e) {}
+                    }
+                    
+                    async function savePositions() {
+                        alert('Positions saved successfully!');
+                        // Real-time updates already saved to config on tablet via updatePosConfig
+                    }
                     
                     document.getElementById('nameA').onclick = () => {
                         let name = prompt("Enter Name for Team A", document.getElementById('nameA').innerText);

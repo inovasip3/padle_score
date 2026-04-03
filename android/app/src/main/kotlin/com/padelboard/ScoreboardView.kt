@@ -29,6 +29,8 @@ class ScoreboardView @JvmOverloads constructor(
     var enablePhotos: Boolean = false
     var photoSize: Int = 25
     var photoYPos: Int = 35
+    var photoXPosA: Int = 0 
+    var photoXPosB: Int = 0
 
     // --- Photos ---
     private var photoA: Bitmap? = null
@@ -290,11 +292,11 @@ class ScoreboardView @JvmOverloads constructor(
         
         // --- Photos ---
         if (enablePhotos && flashAlpha == 0) { // Hide normal photos during flash overlay
-            val drawPhoto = { bmp: Bitmap?, centerX: Float, teamColor: Int ->
+            val drawPhoto = { bmp: Bitmap?, centerX: Float, teamColor: Int, xOffset: Int ->
                 if (bmp != null) {
                     val sizePx = h * (photoSize / 100f)
                     val topY = h * (photoYPos / 100f) - (sizePx / 2f)
-                    val leftX = centerX - (sizePx / 2f)
+                    val leftX = centerX + (w * (xOffset / 100f)) - (sizePx / 2f)
                     val srcRect = Rect(0, 0, bmp.width, bmp.height)
                     val dstRect = RectF(leftX, topY, leftX + sizePx, topY + sizePx)
                     
@@ -305,8 +307,8 @@ class ScoreboardView @JvmOverloads constructor(
                     canvas.drawRect(dstRect, borderP)
                 }
             }
-            drawPhoto(photoA, centerAX, colorA)
-            drawPhoto(photoB, centerBX, colorB)
+            drawPhoto(photoA, centerAX, colorA, photoXPosA)
+            drawPhoto(photoB, centerBX, colorB, photoXPosB)
         }
 
         // --- Team Names ---

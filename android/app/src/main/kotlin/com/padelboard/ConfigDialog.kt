@@ -215,7 +215,9 @@ class ConfigDialog(
 
         // ── Section: Audio ──────────────────────────────────────────────────
         addSectionHeader("🔊 Audio", root)
-        val soundSwitch = createSwitch("Sound Enabled", config.soundEnabled, root)
+        val soundSwitch = createSwitch("Sound Effects Enabled", config.soundEnabled, root)
+        val voiceRefSwitch = createSwitch("Enable Professional Voice Umpire (TTS)", config.enableVoiceRef, root)
+        val useLoveSwitch = createSwitch("Say 'Love' instead of 'Zero'", config.useLoveForZero, root)
 
         // ── Section: Remote Control ─────────────────────────────────────────
         addSectionHeader("📡 Remote Control", root)
@@ -275,6 +277,8 @@ class ConfigDialog(
 
                 // Audio
                 config.soundEnabled = soundSwitch.isChecked
+                config.enableVoiceRef = voiceRefSwitch.isChecked
+                config.useLoveForZero = useLoveSwitch.isChecked
 
                 // Remote
                 config.enableHttpServer = httpSwitch.isChecked

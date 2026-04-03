@@ -11,8 +11,8 @@ android {
         applicationId = "com.padelboard"
         minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "2.1.0"
+        versionCode = 9
+        versionName = "2.2.0"
     }
 
     signingConfigs {
@@ -36,8 +36,8 @@ android {
     productFlavors {
         create("legacy") {
             dimension = "version"
-            minSdk = 24
-            versionNameSuffix = "-legacy"
+            minSdk = 25
+            versionName = "2.1.0-android7"
         }
         create("modern") {
             dimension = "version"
@@ -49,8 +49,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Disable minify for legacy/Android 7.1 to avoid R8-related runtime issues on older ART versions
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
