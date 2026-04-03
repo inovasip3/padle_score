@@ -26,6 +26,18 @@ class ScoreboardView @JvmOverloads constructor(
     var fontScale: Float = 1.0f
     var fontTypeface: String = "monospace"
     var enableWinEffect: Boolean = true
+    var enablePhotos: Boolean = false
+    var photoSize: Int = 25
+    var photoYPos: Int = 35
+
+    // --- Photos ---
+    private var photoA: Bitmap? = null
+    private var photoB: Bitmap? = null
+    private var photoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        isFilterBitmap = true
+    }
+    private var photoBorderPaintA = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8f }
+    private var photoBorderPaintB = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8f }
 
     // --- Score data ---
     var scoreA: String = "0"
@@ -44,7 +56,7 @@ class ScoreboardView @JvmOverloads constructor(
     private var shakeX: Float = 0f
     private var shakeY: Float = 0f
     private var flashAlpha: Int = 0
-    private var celebrationText: String? = null
+    private var celebratingTeam: String? = null
 
     // --- Paints ---
     private val paintBackground = Paint().apply {
@@ -115,6 +127,33 @@ class ScoreboardView @JvmOverloads constructor(
     }
 
     /**
+     * Decode photos from internal storage
+     */
+    fun reloadPhotos() {
+        photoA?.recycle()
+        photoB?.recycle()
+        photoA = null
+        photoB = null
+
+        if (!enablePhotos) {
+            postInvalidate()
+            return
+        }
+
+        try {
+            val fileA = java.io.File(context.filesDir, "team_a_photo.jpg")
+            if (fileA.exists()) photoA = BitmapFactory.decodeFile(fileA.absolutePath)
+        } catch (e: Exception) {}
+
+        try {
+            val fileB = java.io.File(context.filesDir, "team_b_photo.jpg")
+            if (fileB.exists()) photoB = BitmapFactory.decodeFile(fileB.absolutePath)
+        } catch (e: Exception) {}
+        
+        postInvalidate()
+    }
+
+    /**
      * Update score data and trigger redraw with glow animation
      */
     fun updateScore(
@@ -177,17 +216,17 @@ class ScoreboardView @JvmOverloads constructor(
     }
 
     /**
-     * Celebrate a set win with a flash and text overlay
+     * Celebrate a set win with a flash and professional banner overlay
      */
     fun celebrateSetWin(team: String) {
         if (!enableWinEffect) return
-        celebrationText = "SET WINNER: $team"
-        ValueAnimator.ofInt(0, 200, 0).apply {
-            duration = 2000
+        celebratingTeam = team
+        ValueAnimator.ofInt(0, 180, 0).apply {
+            duration = 3500 // 3.5 seconds duration for readability
             addUpdateListener { anim ->
                 flashAlpha = anim.animatedValue as Int
                 if (flashAlpha == 0 && anim.animatedFraction > 0.9f) {
-                    celebrationText = null
+                    celebratingTeam = null
                 }
                 postInvalidateOnAnimation()
             }
@@ -248,6 +287,27 @@ class ScoreboardView @JvmOverloads constructor(
 
         // --- Divider line ---
         canvas.drawLine(halfW, h * 0.05f, halfW, h * 0.95f, paintDivider)
+        
+        // --- Photos ---
+        if (enablePhotos && flashAlpha == 0) { // Hide normal photos during flash overlay
+            val drawPhoto = { bmp: Bitmap?, centerX: Float, teamColor: Int ->
+                if (bmp != null) {
+                    val sizePx = h * (photoSize / 100f)
+                    val topY = h * (photoYPos / 100f) - (sizePx / 2f)
+                    val leftX = centerX - (sizePx / 2f)
+                    val srcRect = Rect(0, 0, bmp.width, bmp.height)
+                    val dstRect = RectF(leftX, topY, leftX + sizePx, topY + sizePx)
+                    
+                    canvas.drawBitmap(bmp, srcRect, dstRect, photoPaint)
+                    
+                    val borderP = if (teamColor == colorA) photoBorderPaintA else photoBorderPaintB
+                    borderP.color = teamColor
+                    canvas.drawRect(dstRect, borderP)
+                }
+            }
+            drawPhoto(photoA, centerAX, colorA)
+            drawPhoto(photoB, centerBX, colorB)
+        }
 
         // --- Team Names ---
         paintTeamNameA.textSize = teamNameSize
@@ -272,10 +332,10 @@ class ScoreboardView @JvmOverloads constructor(
         paintColon.textSize = colonSize
         canvas.drawText(":", halfW, scoreY - scoreSize * 0.15f, paintColon)
 
-        // --- Set Label ---
+        // --- Game Label ---
         paintSetLabel.textSize = setLabelSize
-        canvas.drawText("SETS", centerAX, setLabelY, paintSetLabel)
-        canvas.drawText("SETS", centerBX, setLabelY, paintSetLabel)
+        canvas.drawText("GAMES", centerAX, setLabelY, paintSetLabel)
+        canvas.drawText("GAMES", centerBX, setLabelY, paintSetLabel)
 
         // --- Set Scores ---
         paintSetScore.textSize = setScoreSize
@@ -305,27 +365,81 @@ class ScoreboardView @JvmOverloads constructor(
             canvas.drawRect(0f, 0f, w, h, flashPaint)
         }
 
-        // --- Celebration Text Overlay ---
-        celebrationText?.let { text ->
-            val celebPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.BLACK
+        // --- Professional Celebration Banner Overlay ---
+        celebratingTeam?.let { winningTeamName ->
+            val isTeamA = winningTeamName == teamAName
+            val teamColor = if (isTeamA) colorA else colorB
+            
+            // Draw a full-width elegant dark translucent banner
+            val bannerHeight = h * 0.28f
+            val bannerTop = (h - bannerHeight) / 2f
+            val bannerBottom = bannerTop + bannerHeight
+            
+            val bgPaint = Paint().apply {
+                color = Color.argb(240, 15, 15, 20) // Very dark, sleek background
+                style = Paint.Style.FILL
+            }
+            canvas.drawRect(0f, bannerTop, w, bannerBottom, bgPaint)
+            
+            // Draw glowing accent borders top/bottom in the winning team's color
+            val borderPaint = Paint().apply {
+                color = teamColor
+                style = Paint.Style.STROKE
+                strokeWidth = h * 0.01f
+                setShadowLayer(20f, 0f, 0f, teamColor)
+            }
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+            canvas.drawLine(0f, bannerTop, w, bannerTop, borderPaint)
+            canvas.drawLine(0f, bannerBottom, w, bannerBottom, borderPaint)
+            
+            // "SET WINNER" Subheading
+            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.LTGRAY // elegant silver
+                textSize = h * 0.05f * fontScale
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                letterSpacing = 0.2f
+            }
+            canvas.drawText("🏆 SET WINNER", halfW, bannerTop + (h * 0.09f), titlePaint)
+            
+            // Winning Team Name Display
+            val teamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
                 textSize = h * 0.12f * fontScale
                 textAlign = Paint.Align.CENTER
-                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                setShadowLayer(20f, 0f, 0f, Color.WHITE)
+                typeface = Typeface.create(fontTypeface, Typeface.BOLD)
+                setShadowLayer(30f, 0f, 0f, teamColor) // strong colored glow
             }
-            // Draw background for text
-            val textRect = Rect()
-            celebPaint.getTextBounds(text, 0, text.length, textRect)
-            val bgPaint = Paint().apply { color = Color.WHITE }
-            canvas.drawRect(
-                halfW - textRect.width() / 2f - 40,
-                h / 2f - textRect.height() / 2f - 40,
-                halfW + textRect.width() / 2f + 40,
-                h / 2f + textRect.height() / 2f + 40,
-                bgPaint
-            )
-            canvas.drawText(text, halfW, h / 2f + textRect.height() / 2f, celebPaint)
+            canvas.drawText(winningTeamName, halfW, bannerBottom - (h * 0.06f), teamPaint)
+            
+            // Winning Team Photo Animation Overlay
+            if (enablePhotos) {
+                val winnerBmp = if (isTeamA) photoA else photoB
+                if (winnerBmp != null) {
+                    // Start small, grow large during the animation
+                    val animPerc = 1.0f - (flashAlpha / 180f) // goes from 0f to 1f over time
+                    val scale = 1.0f + (animPerc * 1.5f) // from 1.0x to 2.5x size
+                    
+                    val sizePx = h * (photoSize / 100f) * scale
+                    val topY = bannerTop - sizePx - 40f
+                    val leftX = halfW - (sizePx / 2f)
+                    
+                    if (topY > 20f) {
+                        val srcRect = Rect(0, 0, winnerBmp.width, winnerBmp.height)
+                        val dstRect = RectF(leftX, topY, leftX + sizePx, topY + sizePx)
+                        
+                        // Add glow shadow border
+                        val photoGlowBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { 
+                            style = Paint.Style.STROKE
+                            strokeWidth = 12f
+                            color = teamColor
+                            setShadowLayer(40f, 0f, 0f, teamColor)
+                        }
+                        canvas.drawBitmap(winnerBmp, srcRect, dstRect, photoPaint)
+                        canvas.drawRect(dstRect, photoGlowBorder)
+                    }
+                }
+            }
         }
     }
 

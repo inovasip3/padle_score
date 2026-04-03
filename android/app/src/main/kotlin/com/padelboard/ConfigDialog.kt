@@ -64,46 +64,154 @@ class ConfigDialog(
 
         // ── Section: Scoring Preset ─────────────────────────────────────────
         addSectionHeader("🏓 Scoring Preset", root)
-        val presets = listOf("Standard Padel", "American 11", "American 21", "Custom")
-        val presetKeys = listOf("standard", "american11", "american21", "custom")
-        val presetSpinner = createSpinner(presets, presetKeys.indexOf(config.scoringPreset), root)
+        val presets = listOf("Standard Padel", "Golden Point", "Fast / Short", "Custom 1", "Custom 2", "Custom 3")
+        val presetKeys = listOf("standard", "golden_point", "fast_short", "custom_1", "custom_2", "custom_3")
+        val presetSpinner = createSpinner(presets, presetKeys.indexOf(config.scoringPreset).coerceAtLeast(0), root)
+        
+        // ── Section: Point Rule ──────────────────────────────────────────────
+        addSectionHeader("🎾 POINT RULE", root)
+        val goldenPointSwitch = createSwitch("Use Golden Point", config.useGoldenPoint, root)
 
-        // Custom fields (shown/hidden on preset change)
-        val customIncrLabel = createLabel("Point Increment per score", root)
-        val customIncrInput = createInput("e.g. 1", config.customIncrement.toString(), root, InputType.TYPE_CLASS_NUMBER)
-        val maxPointsLabel = createLabel("Max Points to win a game", root)
-        val maxPointsInput = createInput("e.g. 11", config.maxPointsToWin.toString(), root, InputType.TYPE_CLASS_NUMBER)
-        val winByTwoSwitch = createSwitch("Win by 2 (Deuce/Jus) required", config.winByTwo, root)
+        // ── Section: Game Rule ───────────────────────────────────────────────
+        addSectionHeader("🎾 GAME RULE", root)
+        val gamesToWinSetInput = createInput("Games to Win Set (4-6)", config.gamesToWinSet.toString(), root, InputType.TYPE_CLASS_NUMBER)
+        val winBy2GamesSwitch = createSwitch("Must Win By 2 Games", config.winBy2Games, root)
 
-        fun updatePresetFields(position: Int) {
-            val isCustom = presetKeys[position] == "custom"
-            val editableFields = listOf<View>(customIncrLabel, customIncrInput, maxPointsLabel, maxPointsInput, winByTwoSwitch)
-            editableFields.forEach { it.visibility = if (isCustom) View.VISIBLE else View.GONE }
-            // Pre-fill if selecting a named preset
-            when (presetKeys[position]) {
-                "american11" -> { customIncrInput.setText("1"); maxPointsInput.setText("11"); winByTwoSwitch.isChecked = true }
-                "american21" -> { customIncrInput.setText("1"); maxPointsInput.setText("21"); winByTwoSwitch.isChecked = true }
-                "standard"   -> { customIncrInput.setText("15"); maxPointsInput.setText("40"); winByTwoSwitch.isChecked = false }
-                else -> {}
+        // ── Section: Tie Break ───────────────────────────────────────────────
+        addSectionHeader("🎾 TIE BREAK", root)
+        val useTieBreakSwitch = createSwitch("Use Tie Break", config.useTieBreak, root)
+        val tieBreakAtInput = createInput("Tie Break At (e.g. 6)", config.tieBreakAt.toString(), root, InputType.TYPE_CLASS_NUMBER)
+        val tieBreakTargetInput = createInput("Target Point (e.g. 7)", config.tieBreakTarget.toString(), root, InputType.TYPE_CLASS_NUMBER)
+        val tieBreakWinBy2Switch = createSwitch("Win By 2 Points", config.tieBreakWinBy2, root)
+
+        // ── Section: Set Rule ────────────────────────────────────────────────
+        addSectionHeader("🎾 SET RULE", root)
+        val bestOfOptions = listOf("Best of 1 (1 Set to Win)", "Best of 3 (2 Sets to Win)", "Best of 5 (3 Sets to Win)")
+        val bestOfSetsOptions = listOf(1, 2, 3)
+        val bestOfSpinner = createSpinner(bestOfOptions, bestOfSetsOptions.indexOf(config.setsToWinMatch).coerceAtLeast(0), root)
+        val finalSetSuperTbSwitch = createSwitch("Final Set Super Tie Break", config.finalSetSuperTieBreak, root)
+        val superTbTargetInput = createInput("Super Tie Break Target (e.g. 10)", config.superTieBreakTarget.toString(), root, InputType.TYPE_CLASS_NUMBER)
+
+        val saveToCustomBtn = Button(context).apply {
+            text = "Save Current to Custom Slot"
+            setBackgroundColor(0xFF333333.toInt())
+            setTextColor(Color.WHITE)
+            setPadding(10, 20, 10, 20)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 30, 0, 10) }
+            
+            setOnClickListener {
+                val slots = arrayOf("Custom 1", "Custom 2", "Custom 3")
+                AlertDialog.Builder(context)
+                    .setTitle("Save to Custom Slot")
+                    .setItems(slots) { _, which ->
+                        val slotNum = which + 1
+                        val js = org.json.JSONObject().apply {
+                            put("useGoldenPoint", goldenPointSwitch.isChecked)
+                            put("gamesToWinSet", gamesToWinSetInput.text.toString().toIntOrNull() ?: 6)
+                            put("winBy2Games", winBy2GamesSwitch.isChecked)
+                            put("useTieBreak", useTieBreakSwitch.isChecked)
+                            put("tieBreakAt", tieBreakAtInput.text.toString().toIntOrNull() ?: 6)
+                            put("tieBreakTarget", tieBreakTargetInput.text.toString().toIntOrNull() ?: 7)
+                            put("tieBreakWinBy2", tieBreakWinBy2Switch.isChecked)
+                            put("setsToWinMatch", bestOfSetsOptions[bestOfSpinner.selectedItemPosition])
+                            put("finalSetSuperTieBreak", finalSetSuperTbSwitch.isChecked)
+                            put("superTieBreakTarget", superTbTargetInput.text.toString().toIntOrNull() ?: 10)
+                        }.toString()
+                        config.saveCustomSlotJson(slotNum, js)
+                        Toast.makeText(context, "Saved to Custom $slotNum!", Toast.LENGTH_SHORT).show()
+                        presetSpinner.setSelection(3 + which) // set to chosen custom slot
+                    }
+                    .show()
             }
         }
-        updatePresetFields(presetKeys.indexOf(config.scoringPreset).coerceAtLeast(0))
+        root.addView(saveToCustomBtn)
+
+        // Only explicitly set field values when a preset is actively clicked by the user
+        var isInitialSetup = true
         presetSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = updatePresetFields(pos)
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                if (isInitialSetup) {
+                    isInitialSetup = false
+                    return
+                }
+                val key = presetKeys[pos]
+                when (key) {
+                    "standard" -> {
+                        goldenPointSwitch.isChecked = false
+                        gamesToWinSetInput.setText("6")
+                        winBy2GamesSwitch.isChecked = true
+                        useTieBreakSwitch.isChecked = true
+                        tieBreakAtInput.setText("6")
+                        tieBreakTargetInput.setText("7")
+                        tieBreakWinBy2Switch.isChecked = true
+                        bestOfSpinner.setSelection(1) // 2 sets
+                        finalSetSuperTbSwitch.isChecked = false
+                    }
+                    "golden_point" -> {
+                        goldenPointSwitch.isChecked = true
+                        gamesToWinSetInput.setText("6")
+                        winBy2GamesSwitch.isChecked = true
+                        useTieBreakSwitch.isChecked = true
+                        tieBreakAtInput.setText("6")
+                        tieBreakTargetInput.setText("7")
+                        tieBreakWinBy2Switch.isChecked = true
+                        bestOfSpinner.setSelection(1) // 2 sets
+                        finalSetSuperTbSwitch.isChecked = false
+                    }
+                    "fast_short" -> {
+                        goldenPointSwitch.isChecked = true
+                        gamesToWinSetInput.setText("4")
+                        winBy2GamesSwitch.isChecked = false
+                        useTieBreakSwitch.isChecked = true
+                        tieBreakAtInput.setText("4")
+                        tieBreakTargetInput.setText("5")
+                        tieBreakWinBy2Switch.isChecked = true
+                        bestOfSpinner.setSelection(0) // 1 set
+                        finalSetSuperTbSwitch.isChecked = false
+                    }
+                    "custom_1" -> loadCustomToForm(1)
+                    "custom_2" -> loadCustomToForm(2)
+                    "custom_3" -> loadCustomToForm(3)
+                }
+            }
+            private fun loadCustomToForm(slotNum: Int) {
+                val jsonStr = config.getCustomSlotJson(slotNum)
+                if (jsonStr.isNotEmpty()) {
+                    try {
+                        val json = org.json.JSONObject(jsonStr)
+                        goldenPointSwitch.isChecked = json.optBoolean("useGoldenPoint", false)
+                        gamesToWinSetInput.setText(json.optInt("gamesToWinSet", 6).toString())
+                        winBy2GamesSwitch.isChecked = json.optBoolean("winBy2Games", true)
+                        useTieBreakSwitch.isChecked = json.optBoolean("useTieBreak", true)
+                        tieBreakAtInput.setText(json.optInt("tieBreakAt", 6).toString())
+                        tieBreakTargetInput.setText(json.optInt("tieBreakTarget", 7).toString())
+                        tieBreakWinBy2Switch.isChecked = json.optBoolean("tieBreakWinBy2", true)
+                        bestOfSpinner.setSelection(bestOfSetsOptions.indexOf(json.optInt("setsToWinMatch", 2)).coerceAtLeast(0))
+                        finalSetSuperTbSwitch.isChecked = json.optBoolean("finalSetSuperTieBreak", false)
+                        superTbTargetInput.setText(json.optInt("superTieBreakTarget", 10).toString())
+                    } catch (e: Exception) {}
+                }
+            }
             override fun onNothingSelected(p: AdapterView<*>?) {}
         }
 
         // ── Section: Visuals ────────────────────────────────────────────────
         addSectionHeader("🎨 Visuals", root)
-        val colorALabel = createLabel("Team A Color", root)
+        createLabel("Team A Color", root) // using createLabel without storing var avoids 'never used' warning
         val colorASpinner = createColorSpinner(config.colorA, root)
-        val colorBLabel = createLabel("Team B Color", root)
+        createLabel("Team B Color", root)
         val colorBSpinner = createColorSpinner(config.colorB, root)
-        val fontScaleLabel = createLabel("Font Size", root)
+        createLabel("Font Size", root)
         val fontScaleSpinner = createFontScaleSpinner(config.fontScale, root)
-        val fontTypeLabel = createLabel("Font Style", root)
+        createLabel("Font Style", root)
         val fontTypeSpinner = createFontTypeSpinner(config.fontTypeface, root)
         val winEffectSwitch = createSwitch("Enable Win Celebration Effect", config.enableWinEffect, root)
+
+        // ── Section: Player Photos ──────────────────────────────────────────
+        addSectionHeader("📸 Player Photos", root)
+        val enablePhotosSwitch = createSwitch("Display Team Photos (Upload via Web Remote)", config.enablePhotos, root)
+        val photoSizeInput = createInput("Photo Size (% of screen height, e.g. 25)", config.photoSize.toString(), root, InputType.TYPE_CLASS_NUMBER)
+        val photoYPosInput = createInput("Photo Vertical Position (% from top, e.g. 35)", config.photoYPos.toString(), root, InputType.TYPE_CLASS_NUMBER)
 
         // ── Section: Audio ──────────────────────────────────────────────────
         addSectionHeader("🔊 Audio", root)
@@ -140,14 +248,18 @@ class ConfigDialog(
                 config.serverPort = portInput.text.toString().toIntOrNull() ?: ConfigManager.DEFAULT_PORT
                 config.pin = pinInput.text.toString().ifEmpty { ConfigManager.DEFAULT_PIN }
 
-                // Scoring
-                val selectedPreset = presetKeys[presetSpinner.selectedItemPosition]
-                config.applyPreset(selectedPreset)
-                if (selectedPreset == "custom") {
-                    config.customIncrement = customIncrInput.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 1
-                    config.maxPointsToWin  = maxPointsInput.text.toString().toIntOrNull()?.coerceAtLeast(2) ?: 11
-                    config.winByTwo = winByTwoSwitch.isChecked
-                }
+                // Scoring & Rules
+                config.scoringPreset = presetKeys[presetSpinner.selectedItemPosition]
+                config.useGoldenPoint = goldenPointSwitch.isChecked
+                config.gamesToWinSet = gamesToWinSetInput.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 6
+                config.winBy2Games = winBy2GamesSwitch.isChecked
+                config.useTieBreak = useTieBreakSwitch.isChecked
+                config.tieBreakAt = tieBreakAtInput.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 6
+                config.tieBreakTarget = tieBreakTargetInput.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 7
+                config.tieBreakWinBy2 = tieBreakWinBy2Switch.isChecked
+                config.setsToWinMatch = bestOfSetsOptions[bestOfSpinner.selectedItemPosition]
+                config.finalSetSuperTieBreak = finalSetSuperTbSwitch.isChecked
+                config.superTieBreakTarget = superTbTargetInput.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 10
 
                 // Visuals
                 config.colorA       = getColorFromSpinner(colorASpinner)
@@ -155,6 +267,11 @@ class ConfigDialog(
                 config.fontScale    = getFontScaleFromSpinner(fontScaleSpinner)
                 config.fontTypeface = getFontTypeFromSpinner(fontTypeSpinner)
                 config.enableWinEffect = winEffectSwitch.isChecked
+
+                // Photos
+                config.enablePhotos = enablePhotosSwitch.isChecked
+                config.photoSize    = photoSizeInput.text.toString().toIntOrNull()?.coerceIn(10, 80) ?: 25
+                config.photoYPos    = photoYPosInput.text.toString().toIntOrNull()?.coerceIn(0, 100) ?: 35
 
                 // Audio
                 config.soundEnabled = soundSwitch.isChecked

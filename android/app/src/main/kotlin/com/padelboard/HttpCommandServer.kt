@@ -23,6 +23,7 @@ class HttpCommandServer(
             uri == "/cmd" -> handleCommand(params)
             uri == "/status" -> handleStatus()
             uri == "/config" -> handleConfig(params)
+            uri == "/upload" && session.method == Method.POST -> handleUpload(session)
             uri == "/ping" -> newFixedLengthResponse(
                 Response.Status.OK, "application/json",
                 """{"ok":true,"msg":"pong"}"""
@@ -84,6 +85,48 @@ class HttpCommandServer(
         )
     }
     
+    private fun handleUpload(session: IHTTPSession): Response {
+        try {
+            val files = mutableMapOf<String, String>()
+            session.parseBody(files)
+            
+            val params = session.parms
+            val team = params["team"] // "A" or "B"
+            
+            val tempPath = files["file"]
+            if (team != null && tempPath != null) {
+                val tempFile = java.io.File(tempPath)
+                val targetFile = java.io.File(config.context.filesDir, "team_${team.lowercase()}_photo.jpg")
+                tempFile.copyTo(targetFile, overwrite = true)
+                
+                // Keep file within reasonable size using a simple bitmap scaling down step
+                try {
+                    val bmp = android.graphics.BitmapFactory.decodeFile(targetFile.absolutePath)
+                    if (bmp != null) {
+                        val maxDim = 800
+                        if (bmp.width > maxDim || bmp.height > maxDim) {
+                            val ratio = Math.min(maxDim.toFloat() / bmp.width, maxDim.toFloat() / bmp.height)
+                            val scaled = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * ratio).toInt(), (bmp.height * ratio).toInt(), true)
+                            val out = java.io.FileOutputStream(targetFile)
+                            scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                            out.close()
+                            scaled.recycle()
+                        }
+                        bmp.recycle()
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+                
+                // Notify UI to reload images
+                onCommand("CONFIG_UPDATE")
+                
+                return newFixedLengthResponse(Response.Status.OK, "application/json", """{"ok":true}""")
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return newFixedLengthResponse(Response.Status.BAD_REQUEST, "application/json", """{"ok":false,"error":"Upload failed"}""")
+    }
+
     private fun handleConfig(params: Map<String, String>): Response {
         val teamA = params["teamA"]
         if (teamA != null) config.teamAName = teamA
@@ -158,6 +201,14 @@ class HttpCommandServer(
                         cursor: pointer;
                         padding: 10px;
                     }
+                    .upload-btn {
+                        font-size: 14px;
+                        color: #bbb;
+                        cursor: pointer;
+                        display: block;
+                        text-align: center;
+                        margin-top: -10px;
+                    }
                     .team-a { color: #00FF66; }
                     .team-b { color: #FFA500; }
                     .scores {
@@ -193,8 +244,16 @@ class HttpCommandServer(
             </head>
             <body>
                 <div class="header">
-                    <div id="nameA" class="team-name team-a">TEAM A</div>
-                    <div id="nameB" class="team-name team-b">TEAM B</div>
+                    <div>
+                        <div id="nameA" class="team-name team-a">TEAM A</div>
+                        <label class="upload-btn" for="photoA">📸 Upload Photo A</label>
+                        <input type="file" id="photoA" accept="image/*" style="display:none" onchange="uploadPhoto('A', this)">
+                    </div>
+                    <div>
+                        <div id="nameB" class="team-name team-b">TEAM B</div>
+                        <label class="upload-btn" for="photoB">📸 Upload Photo B</label>
+                        <input type="file" id="photoB" accept="image/*" style="display:none" onchange="uploadPhoto('B', this)">
+                    </div>
                 </div>
                 <div class="scores" id="scoresArea">
                     <div class="score-panel" id="panelA">
@@ -263,6 +322,19 @@ class HttpCommandServer(
                         let name = prompt("Enter Name for Team B", document.getElementById('nameB').innerText);
                         if (name) updateConfig('teamB', name);
                     };
+                    
+                    async function uploadPhoto(team, input) {
+                        if (!input.files || input.files.length === 0) return;
+                        let formData = new FormData();
+                        formData.append('file', input.files[0]);
+                        try {
+                            const res = await fetch('/upload?team=' + team, { method: 'POST', body: formData });
+                            const data = await res.json();
+                            if(data.ok) alert('Photo uploaded successfully for Team ' + team);
+                        } catch(e) {
+                            alert('Upload failed');
+                        }
+                    }
                     
                     const handleTouch = (targetIds, cmdPlus, cmdMinus) => {
                         targetIds.forEach(id => {

@@ -74,7 +74,7 @@ class MainActivity : Activity() {
 
         // Initialize components
         config = ConfigManager(this)
-        scoreState = ScoreState()
+        scoreState = ScoreState(config)
         scoreboardView = findViewById(R.id.scoreboardView)
         ipOverlay = findViewById(R.id.ipOverlay)
         qrCodeView = findViewById(R.id.qrCodeView)
@@ -133,17 +133,17 @@ class MainActivity : Activity() {
     }
 
     private fun applyConfig() {
-        // Apply scoring mode to ScoreState
-        scoreState.scoringMode     = config.scoringMode
-        scoreState.customIncrement = config.customIncrement
-        scoreState.maxPointsToWin  = config.maxPointsToWin
-        scoreState.winByTwo        = config.winByTwo
+        // ScoreState now reads directly from config internally upon methods like isGamePoint()
 
         // Apply visual config to ScoreboardView
         scoreboardView.teamAName   = config.teamAName
         scoreboardView.teamBName   = config.teamBName
         scoreboardView.fontTypeface = config.fontTypeface
         scoreboardView.enableWinEffect = config.enableWinEffect
+        scoreboardView.enablePhotos = config.enablePhotos
+        scoreboardView.photoSize = config.photoSize
+        scoreboardView.photoYPos = config.photoYPos
+        scoreboardView.reloadPhotos()
 
         // JSON theme overrides individual fields if valid
         applyJsonTheme()
@@ -182,14 +182,21 @@ class MainActivity : Activity() {
     private fun refreshScoreboard(changedTeam: Char? = null) {
         val currentSetsA = scoreState.setsA
         val currentSetsB = scoreState.setsB
+        val currentGamesA = scoreState.gamesA
+        val currentGamesB = scoreState.gamesB
         
         val setWon = currentSetsA > lastSetsA || currentSetsB > lastSetsB
+        
+        // Padel display format: If there's 1 set played, showing "1-4" (Set-Game). 
+        // Or if simple, just show games. We will pass games to the scoreboard's 'sets' field for now,
+        // Since traditional scoreboards show games in the secondary digits.
+        // Wait, ScoreboardView expects Int. We'll give it games.
         
         scoreboardView.updateScore(
             newScoreA = scoreState.getScoreDisplayA(),
             newScoreB = scoreState.getScoreDisplayB(),
-            newSetsA = currentSetsA,
-            newSetsB = currentSetsB,
+            newSetsA = currentGamesA,
+            newSetsB = currentGamesB,
             newStatus = scoreState.getStatusText(),
             changedTeam = changedTeam
         )
@@ -214,8 +221,9 @@ class MainActivity : Activity() {
     }
     
     private fun updateBottomInfoVisibility() {
-        // Show QR code and IP only when the score is 0-0 in points and sets
+        // Show QR code and IP only when the score is 0-0 in points, games, and sets
         val isStarted = scoreState.setsA > 0 || scoreState.setsB > 0 || 
+                        scoreState.gamesA > 0 || scoreState.gamesB > 0 ||
                         scoreState.getScoreDisplayA() != "0" || scoreState.getScoreDisplayB() != "0"
         
         if (!isStarted) {
@@ -263,7 +271,6 @@ class MainActivity : Activity() {
         
         scoreboardView.onResetLongPress = {
             scoreState.reset()
-            applyConfig()
             refreshScoreboard()
             soundManager.playUndo() // Use undo sound for reset
         }
@@ -330,8 +337,22 @@ class MainActivity : Activity() {
                 )
             }
 
-            // Method 2: Enumerate network interfaces
+            // Method 2: Enumerate network interfaces (Prioritize Tethering/Hotspot)
             val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+            
+            // First pass: look for Hotspot/Tethering interfaces (usually ap0, wlan1, etc.)
+            for (intf in interfaces) {
+                if (intf.name.contains("ap") || intf.name.contains("wlan1")) {
+                    val addrs = Collections.list(intf.inetAddresses)
+                    for (addr in addrs) {
+                        if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                            return addr.hostAddress
+                        }
+                    }
+                }
+            }
+
+            // Second pass: any other non-loopback IPv4 (standard WiFi/Ethernet)
             for (intf in interfaces) {
                 val addrs = Collections.list(intf.inetAddresses)
                 for (addr in addrs) {

@@ -7,35 +7,33 @@ package com.padelboard
  *   - "custom": Numeric increment scoring with configurable max points and win-by-two.
  * Thread-safe via synchronized blocks.
  */
-class ScoreState {
+// --- Rewrite of ScoreState.kt ---
 
-    // Standard Padel point labels
+class ScoreState(private val config: ConfigManager) {
+
     private val standardLabels = arrayOf("0", "15", "30", "40")
 
-    // Mode reference: set from outside after config load
-    var scoringMode: String = "standard"     // "standard" | "custom"
-    var customIncrement: Int = 1
-    var maxPointsToWin: Int = 11
-    var winByTwo: Boolean = true
+    var pointsA: Int = 0
+        private set
+    var pointsB: Int = 0
+        private set
 
-    // --- Standard mode internals ---
-    private var pointsA: Int = 0
-    private var pointsB: Int = 0
-    private var isDeuce: Boolean = false
-    private var advantageTeam: Char? = null
+    var gamesA: Int = 0
+        private set
+    var gamesB: Int = 0
+        private set
 
-    // --- Custom mode internals ---
-    private var customPointsA: Int = 0
-    private var customPointsB: Int = 0
-
-    // --- Set/Match counters (shared by both modes) ---
     var setsA: Int = 0
         private set
     var setsB: Int = 0
         private set
-    var matchSetsA: Int = 0
+
+    private var isDeuce: Boolean = false
+    private var advantageTeam: Char? = null
+
+    var isTieBreak: Boolean = false
         private set
-    var matchSetsB: Int = 0
+    var isSuperTieBreak: Boolean = false
         private set
 
     var lastGameWinner: Char? = null
@@ -43,33 +41,36 @@ class ScoreState {
 
     var onScoreChanged: (() -> Unit)? = null
 
-    // -------------------------------------------------------------------------
-    // Public Display API
-    // -------------------------------------------------------------------------
-
     @Synchronized
     fun getScoreDisplayA(): String {
-        return if (scoringMode == "standard") {
-            if (isDeuce) if (advantageTeam == 'A') "AD" else if (advantageTeam == 'B') "" else "40"
-            else standardLabels.getOrElse(pointsA) { "0" }
+        return if (isTieBreak || isSuperTieBreak) {
+            pointsA.toString()
         } else {
-            customPointsA.toString()
+            if (isDeuce) {
+                if (advantageTeam == 'A') "AD" else if (advantageTeam == 'B') "" else "40"
+            } else {
+                standardLabels.getOrElse(pointsA) { "0" }
+            }
         }
     }
 
     @Synchronized
     fun getScoreDisplayB(): String {
-        return if (scoringMode == "standard") {
-            if (isDeuce) if (advantageTeam == 'B') "AD" else if (advantageTeam == 'A') "" else "40"
-            else standardLabels.getOrElse(pointsB) { "0" }
+        return if (isTieBreak || isSuperTieBreak) {
+            pointsB.toString()
         } else {
-            customPointsB.toString()
+            if (isDeuce) {
+                if (advantageTeam == 'B') "AD" else if (advantageTeam == 'A') "" else "40"
+            } else {
+                standardLabels.getOrElse(pointsB) { "0" }
+            }
         }
     }
 
     @Synchronized
     fun getStatusText(): String {
-        if (scoringMode != "standard") return ""
+        if (isSuperTieBreak) return "SUPER TIE-BREAK"
+        if (isTieBreak) return "TIE-BREAK"
         return when {
             isDeuce && advantageTeam == null -> "DEUCE"
             isDeuce && advantageTeam == 'A' -> "ADVANTAGE"
@@ -79,116 +80,192 @@ class ScoreState {
     }
 
     fun isGamePoint(team: Char): Boolean {
-        return if (scoringMode == "standard") {
-            if (isDeuce) advantageTeam == team
-            else if (team == 'A') pointsA == 3 && pointsB < 3 else pointsB == 3 && pointsA < 3
-        } else {
-            val myPts = if (team == 'A') customPointsA else customPointsB
-            val opPts = if (team == 'A') customPointsB else customPointsA
-            if (winByTwo) {
-                myPts + customIncrement >= maxPointsToWin && myPts - opPts >= 0
-            } else {
-                myPts + customIncrement >= maxPointsToWin
-            }
+        if (isSuperTieBreak) {
+            val myPts = if (team == 'A') pointsA else pointsB
+            val opPts = if (team == 'A') pointsB else pointsA
+            return myPts >= config.superTieBreakTarget - 1 && myPts - opPts >= 1 // Rough logic for 'point away'
         }
+        if (isTieBreak) {
+            val target = config.tieBreakTarget
+            val myPts = if (team == 'A') pointsA else pointsB
+            val opPts = if (team == 'A') pointsB else pointsA
+            val diffReq = if (config.tieBreakWinBy2) 2 else 1
+            return myPts >= target - 1 && (myPts + 1) - opPts >= diffReq
+        }
+        
+        if (config.useGoldenPoint && isDeuce) return true // Next point wins
+        
+        if (isDeuce) return advantageTeam == team
+        
+        val myPts = if (team == 'A') pointsA else pointsB
+        val opPts = if (team == 'A') pointsB else pointsA
+        return myPts == 3 && opPts < 3
     }
 
     fun isSetPoint(team: Char): Boolean {
         if (!isGamePoint(team)) return false
-        return if (team == 'A') setsA == 5 else setsB == 5
+        if (isSuperTieBreak) return true // Super tie-break wins the match/set
+        
+        val myGames = if (team == 'A') gamesA else gamesB
+        val opGames = if (team == 'A') gamesB else gamesA
+        
+        if (isTieBreak) return true // Winning tie-break wins the set
+        
+        val nextGames = myGames + 1
+        if (config.winBy2Games) {
+            return nextGames >= config.gamesToWinSet && nextGames - opGames >= 2
+        } else {
+            return nextGames >= config.gamesToWinSet
+        }
     }
 
     fun isMatchPoint(team: Char): Boolean {
         if (!isSetPoint(team)) return false
-        return if (team == 'A') matchSetsA == 1 else matchSetsB == 1
+        val mySets = if (team == 'A') setsA else setsB
+        return (mySets + 1) >= config.setsToWinMatch
     }
-
-    // -------------------------------------------------------------------------
-    // Point mutation
-    // -------------------------------------------------------------------------
 
     @Synchronized
     fun addPoint(team: Char) {
         lastGameWinner = null
-        if (scoringMode == "standard") {
-            if (isDeuce) handleDeucePoint(team) else handleStandardPoint(team)
+        if (isSuperTieBreak) {
+            handleTieBreakPoint(team, config.superTieBreakTarget)
+        } else if (isTieBreak) {
+            handleTieBreakPoint(team, config.tieBreakTarget)
         } else {
-            handleCustomPoint(team)
+            handleStandardPoint(team)
         }
         onScoreChanged?.invoke()
     }
 
+    private fun handleTieBreakPoint(team: Char, targetPoints: Int) {
+        if (team == 'A') pointsA++ else pointsB++
+
+        val myPts = if (team == 'A') pointsA else pointsB
+        val opPts = if (team == 'A') pointsB else pointsA
+        
+        val diffReq = if (config.tieBreakWinBy2) 2 else 1
+        
+        if (myPts >= targetPoints && (myPts - opPts) >= diffReq) {
+            winGame(team)
+        }
+    }
+
     private fun handleStandardPoint(team: Char) {
+        if (isDeuce) {
+            if (config.useGoldenPoint) {
+                winGame(team) // Golden point won
+            } else {
+                when {
+                    advantageTeam == null -> advantageTeam = team
+                    advantageTeam == team -> winGame(team)
+                    else -> advantageTeam = null // Back to deuce
+                }
+            }
+            return
+        }
+
         if (team == 'A') {
             if (pointsA < 3) {
                 pointsA++
                 if (pointsA == 3 && pointsB == 3) isDeuce = true
-            } else winGame('A')
+            } else {
+                winGame('A')
+            }
         } else {
             if (pointsB < 3) {
                 pointsB++
                 if (pointsA == 3 && pointsB == 3) isDeuce = true
-            } else winGame('B')
-        }
-    }
-
-    private fun handleDeucePoint(team: Char) {
-        when {
-            advantageTeam == null -> advantageTeam = team
-            advantageTeam == team -> winGame(team)
-            else -> advantageTeam = null
-        }
-    }
-
-    private fun handleCustomPoint(team: Char) {
-        if (team == 'A') customPointsA += customIncrement
-        else customPointsB += customIncrement
-
-        val myPts = if (team == 'A') customPointsA else customPointsB
-        val opPts = if (team == 'A') customPointsB else customPointsA
-
-        val reachedTarget = myPts >= maxPointsToWin
-        val clearByTwo = !winByTwo || (myPts - opPts >= 2)
-
-        if (reachedTarget && clearByTwo) {
-            winGame(team)
+            } else {
+                winGame('B')
+            }
         }
     }
 
     private fun winGame(team: Char) {
         lastGameWinner = team
-        if (team == 'A') setsA++ else setsB++
-        if (setsA == 6 || setsB == 6) winSet(team) else resetGame()
+        if (team == 'A') gamesA++ else gamesB++
+        
+        val myGames = if (team == 'A') gamesA else gamesB
+        val opGames = if (team == 'A') gamesB else gamesA
+
+        val setWon = if (config.winBy2Games) {
+            myGames >= config.gamesToWinSet && (myGames - opGames) >= 2
+        } else {
+            myGames >= config.gamesToWinSet
+        }
+
+        if (setWon) {
+            winSet(team)
+        } else {
+            resetPointState()
+            checkTieBreak()
+        }
     }
 
     private fun winSet(team: Char) {
-        if (team == 'A') matchSetsA++ else matchSetsB++
-        setsA = 0; setsB = 0
-        resetGame()
+        if (team == 'A') setsA++ else setsB++
+        
+        // Reset Set State
+        gamesA = 0
+        gamesB = 0
+        resetPointState()
+        
+        checkSuperTieBreak()
     }
 
-    private fun resetGame() {
-        pointsA = 0; pointsB = 0
-        customPointsA = 0; customPointsB = 0
-        isDeuce = false; advantageTeam = null
+    private fun checkTieBreak() {
+        if (!config.useTieBreak) return
+        if (gamesA == config.tieBreakAt && gamesB == config.tieBreakAt) {
+            isTieBreak = true
+        } else {
+            isTieBreak = false
+        }
+    }
+    
+    private fun checkSuperTieBreak() {
+        if (!config.finalSetSuperTieBreak) return
+        
+        // Ex: Best of 3 (setsToWinMatch = 2). If both teams have 1 set, next set is final set.
+        val setsPlayed = setsA + setsB
+        val totalSetsPossible = config.setsToWinMatch * 2 - 1 // best of 3 -> max 3 sets.
+        
+        if (setsPlayed == totalSetsPossible - 1) { // 1-1 in best of 3
+            isSuperTieBreak = true
+        } else {
+            isSuperTieBreak = false
+        }
+    }
+
+    private fun resetPointState() {
+        pointsA = 0
+        pointsB = 0
+        isDeuce = false
+        advantageTeam = null
+        isTieBreak = false
+        isSuperTieBreak = false
     }
 
     @Synchronized
     fun removePoint(team: Char) {
+        // Simple undo logic
         lastGameWinner = null
-        if (scoringMode == "standard") {
+        if (isTieBreak || isSuperTieBreak) {
+            if (team == 'A' && pointsA > 0) pointsA--
+            if (team == 'B' && pointsB > 0) pointsB--
+        } else {
             if (isDeuce) {
-                if (advantageTeam != null) advantageTeam = null
-                else {
+                if (advantageTeam != null) {
+                    advantageTeam = null 
+                } else {
                     isDeuce = false
-                    if (team == 'A') { pointsA = 2; pointsB = 3 } else { pointsA = 3; pointsB = 2 }
+                    if (team == 'A') { pointsA = 2; pointsB = 3 }
+                    else { pointsA = 3; pointsB = 2 }
                 }
             } else {
-                if (team == 'A') { if (pointsA > 0) pointsA-- } else { if (pointsB > 0) pointsB-- }
+                if (team == 'A' && pointsA > 0) pointsA--
+                if (team == 'B' && pointsB > 0) pointsB--
             }
-        } else {
-            if (team == 'A') { if (customPointsA > 0) customPointsA -= customIncrement }
-            else { if (customPointsB > 0) customPointsB -= customIncrement }
         }
         onScoreChanged?.invoke()
     }
@@ -196,10 +273,10 @@ class ScoreState {
     @Synchronized
     fun reset() {
         pointsA = 0; pointsB = 0
-        customPointsA = 0; customPointsB = 0
+        gamesA = 0; gamesB = 0
         setsA = 0; setsB = 0
-        matchSetsA = 0; matchSetsB = 0
         isDeuce = false; advantageTeam = null
+        isTieBreak = false; isSuperTieBreak = false
         lastGameWinner = null
         onScoreChanged?.invoke()
     }
@@ -208,13 +285,13 @@ class ScoreState {
     fun toMap(): Map<String, Any?> = mapOf(
         "scoreA" to getScoreDisplayA(),
         "scoreB" to getScoreDisplayB(),
+        "gamesA" to gamesA,
+        "gamesB" to gamesB,
         "setsA" to setsA,
         "setsB" to setsB,
-        "matchSetsA" to matchSetsA,
-        "matchSetsB" to matchSetsB,
         "isDeuce" to isDeuce,
         "advantage" to advantageTeam?.toString(),
-        "status" to getStatusText(),
-        "scoringMode" to scoringMode
+        "status" to getStatusText()
     )
 }
+
