@@ -44,9 +44,10 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
-        android:layout_margin="12dp"
+        android:layout_margin="4dp"
+        android:padding="16dp"
         android:textColor="#44FFFFFF"
         android:textSize="12sp"
-        android:text="Padle Score v.1.0.0." />
+        android:text="Padle Score v.2.0.0" />
 
 </FrameLayout>

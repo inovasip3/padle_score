@@ -59,9 +59,22 @@
 //  PIN DEFINITIONS
 // ============================================================
 
-#define PIN_SENSOR_LEFT   D1    // GPIO5 - IR sensor for Team A
-#define PIN_SENSOR_RIGHT  D2    // GPIO4 - IR sensor for Team B
-#define PIN_LED           D4    // GPIO2 - Built-in LED (active LOW)
+#define PIN_SENSOR_LEFT   5     // GPIO5 (D1) - IR sensor for Team A
+#define PIN_SENSOR_RIGHT  4     // GPIO4 (D2) - IR sensor for Team B
+#define PIN_LED           2     // GPIO2 (D4) - Built-in LED (active LOW)
+#define PIN_BUZZER        14    // GPIO14 (D5) - Active Buzzer (active HIGH)
+
+// ============================================================
+//  HELPER: BUZZER TONE
+// ============================================================
+void triggerBuzzer(int durationMs, int count = 1) {
+    for (int i = 0; i < count; i++) {
+        digitalWrite(PIN_BUZZER, HIGH);
+        delay(durationMs);
+        digitalWrite(PIN_BUZZER, LOW);
+        if (count > 1 && i < count - 1) delay(50);
+    }
+}
 
 // ============================================================
 //  TIMING CONSTANTS
@@ -129,7 +142,9 @@ void setup() {
     pinMode(PIN_SENSOR_LEFT, INPUT);
     pinMode(PIN_SENSOR_RIGHT, INPUT);
     pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_BUZZER, OUTPUT);
     digitalWrite(PIN_LED, HIGH); // LED off (active LOW)
+    digitalWrite(PIN_BUZZER, LOW);
     
     // Connect to WiFi
     connectWiFi();
@@ -229,6 +244,7 @@ void readSensors() {
                 leftTriggerStart = now;
                 leftCommandSent = false;
                 Serial.println(F("LEFT sensor: TRIGGERED"));
+                triggerBuzzer(80); // Quick feedback beep
             } else {
                 Serial.println(F("LEFT sensor: RELEASED"));
             }
@@ -249,6 +265,7 @@ void readSensors() {
                 rightTriggerStart = now;
                 rightCommandSent = false;
                 Serial.println(F("RIGHT sensor: TRIGGERED"));
+                triggerBuzzer(80); // Quick feedback beep
             } else {
                 Serial.println(F("RIGHT sensor: RELEASED"));
             }
@@ -404,12 +421,14 @@ void sendCommand(const char* cmd) {
     }
     
     if (success) {
-        // Quick blink = success
+        // Quick blink + double beep = success
         blinkSuccess();
+        triggerBuzzer(50, 2);
     } else {
-        // Error blink
+        // Error blink + long beep
         Serial.println(F("All retries failed!"));
         blinkError();
+        triggerBuzzer(500);
     }
     
     lastSendTime = millis();

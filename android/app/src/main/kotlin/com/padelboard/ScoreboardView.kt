@@ -23,6 +23,9 @@ class ScoreboardView @JvmOverloads constructor(
     var teamBName: String = "TEAM B"
     var colorA: Int = 0xFF00FF66.toInt()
     var colorB: Int = 0xFFFFA500.toInt()
+    var fontScale: Float = 1.0f
+    var fontTypeface: String = "monospace"
+    var enableWinEffect: Boolean = true
 
     // --- Score data ---
     var scoreA: String = "0"
@@ -36,6 +39,12 @@ class ScoreboardView @JvmOverloads constructor(
     private var glowAlphaB: Float = 0f
     private var glowAnimatorA: ValueAnimator? = null
     private var glowAnimatorB: ValueAnimator? = null
+    
+    // --- Screen Shake & Flash ---
+    private var shakeX: Float = 0f
+    private var shakeY: Float = 0f
+    private var flashAlpha: Int = 0
+    private var celebrationText: String? = null
 
     // --- Paints ---
     private val paintBackground = Paint().apply {
@@ -149,6 +158,42 @@ class ScoreboardView @JvmOverloads constructor(
         }
         animator.start()
     }
+    
+    /**
+     * Trigger a screen-shake effect (e.g. on point scored)
+     */
+    fun shake() {
+        ValueAnimator.ofFloat(20f, 0f).apply {
+            duration = 300
+            interpolator = AccelerateDecelerateInterpolator()
+            addUpdateListener { anim ->
+                val v = anim.animatedValue as Float
+                shakeX = (Math.random() * v - v / 2).toFloat()
+                shakeY = (Math.random() * v - v / 2).toFloat()
+                postInvalidateOnAnimation()
+            }
+            start()
+        }
+    }
+
+    /**
+     * Celebrate a set win with a flash and text overlay
+     */
+    fun celebrateSetWin(team: String) {
+        if (!enableWinEffect) return
+        celebrationText = "SET WINNER: $team"
+        ValueAnimator.ofInt(0, 200, 0).apply {
+            duration = 2000
+            addUpdateListener { anim ->
+                flashAlpha = anim.animatedValue as Int
+                if (flashAlpha == 0 && anim.animatedFraction > 0.9f) {
+                    celebrationText = null
+                }
+                postInvalidateOnAnimation()
+            }
+            start()
+        }
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -159,11 +204,16 @@ class ScoreboardView @JvmOverloads constructor(
         // Background
         canvas.drawRect(0f, 0f, w, h, paintBackground)
 
-        // Update paint colors (in case they changed from config)
-        paintScoreA.color = colorA
-        paintScoreB.color = colorB
-        paintTeamNameA.color = colorA
-        paintTeamNameB.color = colorB
+        // Apply shake translation
+        canvas.save()
+        canvas.translate(shakeX, shakeY)
+
+        // Update paint colors and typeface in case they changed from config
+        val tf = android.graphics.Typeface.create(fontTypeface, android.graphics.Typeface.BOLD)
+        paintScoreA.color = colorA;    paintScoreA.typeface = tf
+        paintScoreB.color = colorB;    paintScoreB.typeface = tf
+        paintTeamNameA.color = colorA; paintTeamNameA.typeface = tf
+        paintTeamNameB.color = colorB; paintTeamNameB.typeface = tf
         paintGlowA.color = colorA
         paintGlowB.color = colorB
 
@@ -178,13 +228,13 @@ class ScoreboardView @JvmOverloads constructor(
         val setScoreY = h * 0.90f
         val statusY = h * 0.97f
 
-        // --- Font sizes scaled to screen ---
-        val teamNameSize = h * 0.07f
-        val scoreSize = h * 0.38f
-        val setScoreSize = h * 0.09f
-        val setLabelSize = h * 0.04f
-        val statusSize = h * 0.05f
-        val colonSize = h * 0.30f
+        // --- Font sizes scaled to screen and user config ---
+        val teamNameSize = h * 0.07f * fontScale
+        val scoreSize = h * 0.38f * fontScale
+        val setScoreSize = h * 0.09f * fontScale
+        val setLabelSize = h * 0.04f * fontScale
+        val statusSize = h * 0.05f * fontScale
+        val colonSize = h * 0.30f * fontScale
 
         // --- Draw glow effects ---
         if (glowAlphaA > 0) {
@@ -242,6 +292,40 @@ class ScoreboardView @JvmOverloads constructor(
             paintStatus.textSize = statusSize
             paintStatus.setShadowLayer(statusSize * 0.2f, 0f, 0f, Color.WHITE)
             canvas.drawText(statusText, halfW, statusY, paintStatus)
+        }
+        
+        canvas.restore() // End shake translation
+
+        // --- Flash Overlay ---
+        if (flashAlpha > 0) {
+            val flashPaint = Paint().apply {
+                color = Color.WHITE
+                alpha = flashAlpha
+            }
+            canvas.drawRect(0f, 0f, w, h, flashPaint)
+        }
+
+        // --- Celebration Text Overlay ---
+        celebrationText?.let { text ->
+            val celebPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                textSize = h * 0.12f * fontScale
+                textAlign = Paint.Align.CENTER
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+                setShadowLayer(20f, 0f, 0f, Color.WHITE)
+            }
+            // Draw background for text
+            val textRect = Rect()
+            celebPaint.getTextBounds(text, 0, text.length, textRect)
+            val bgPaint = Paint().apply { color = Color.WHITE }
+            canvas.drawRect(
+                halfW - textRect.width() / 2f - 40,
+                h / 2f - textRect.height() / 2f - 40,
+                halfW + textRect.width() / 2f + 40,
+                h / 2f + textRect.height() / 2f + 40,
+                bgPaint
+            )
+            canvas.drawText(text, halfW, h / 2f + textRect.height() / 2f, celebPaint)
         }
     }
 

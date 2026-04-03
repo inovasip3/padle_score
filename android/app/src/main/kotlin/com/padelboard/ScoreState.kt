@@ -1,61 +1,75 @@
 package com.padelboard
 
 /**
- * Padel scoring state machine.
- * Implements official padel scoring: 0, 15, 30, 40, Deuce, Advantage.
+ * V2.0 - Padel scoring state machine.
+ * Supports two modes:
+ *   - "standard": Traditional 0/15/30/40/Deuce/Advantage Padel scoring.
+ *   - "custom": Numeric increment scoring with configurable max points and win-by-two.
  * Thread-safe via synchronized blocks.
  */
 class ScoreState {
 
-    // Points index: 0=0, 1=15, 2=30, 3=40
-    private val pointLabels = arrayOf("0", "15", "30", "40")
+    // Standard Padel point labels
+    private val standardLabels = arrayOf("0", "15", "30", "40")
 
-    // Game points (index into pointLabels, or special states)
+    // Mode reference: set from outside after config load
+    var scoringMode: String = "standard"     // "standard" | "custom"
+    var customIncrement: Int = 1
+    var maxPointsToWin: Int = 11
+    var winByTwo: Boolean = true
+
+    // --- Standard mode internals ---
     private var pointsA: Int = 0
     private var pointsB: Int = 0
+    private var isDeuce: Boolean = false
+    private var advantageTeam: Char? = null
 
-    // Set scores
+    // --- Custom mode internals ---
+    private var customPointsA: Int = 0
+    private var customPointsB: Int = 0
+
+    // --- Set/Match counters (shared by both modes) ---
     var setsA: Int = 0
         private set
     var setsB: Int = 0
         private set
-
-    // Special states
-    var isDeuce: Boolean = false
+    var matchSetsA: Int = 0
         private set
-    var advantageTeam: Char? = null // 'A' or 'B' or null
+    var matchSetsB: Int = 0
         private set
 
-    // Track whether a game was just won for UI animation
     var lastGameWinner: Char? = null
         private set
 
-    // Listener for score changes
     var onScoreChanged: (() -> Unit)? = null
 
-    /**
-     * Get display text for team A's game score
-     */
+    // -------------------------------------------------------------------------
+    // Public Display API
+    // -------------------------------------------------------------------------
+
     @Synchronized
     fun getScoreDisplayA(): String {
-        if (isDeuce) return if (advantageTeam == 'A') "AD" else if (advantageTeam == 'B') "" else "40"
-        return if (pointsA in 0..3) pointLabels[pointsA] else "0"
+        return if (scoringMode == "standard") {
+            if (isDeuce) if (advantageTeam == 'A') "AD" else if (advantageTeam == 'B') "" else "40"
+            else standardLabels.getOrElse(pointsA) { "0" }
+        } else {
+            customPointsA.toString()
+        }
     }
 
-    /**
-     * Get display text for team B's game score
-     */
     @Synchronized
     fun getScoreDisplayB(): String {
-        if (isDeuce) return if (advantageTeam == 'B') "AD" else if (advantageTeam == 'A') "" else "40"
-        return if (pointsB in 0..3) pointLabels[pointsB] else "0"
+        return if (scoringMode == "standard") {
+            if (isDeuce) if (advantageTeam == 'B') "AD" else if (advantageTeam == 'A') "" else "40"
+            else standardLabels.getOrElse(pointsB) { "0" }
+        } else {
+            customPointsB.toString()
+        }
     }
 
-    /**
-     * Get the deuce/advantage status text (shown centrally)
-     */
     @Synchronized
     fun getStatusText(): String {
+        if (scoringMode != "standard") return ""
         return when {
             isDeuce && advantageTeam == null -> "DEUCE"
             isDeuce && advantageTeam == 'A' -> "ADVANTAGE"
@@ -64,139 +78,143 @@ class ScoreState {
         }
     }
 
-    /**
-     * Add a point to the specified team
-     */
+    fun isGamePoint(team: Char): Boolean {
+        return if (scoringMode == "standard") {
+            if (isDeuce) advantageTeam == team
+            else if (team == 'A') pointsA == 3 && pointsB < 3 else pointsB == 3 && pointsA < 3
+        } else {
+            val myPts = if (team == 'A') customPointsA else customPointsB
+            val opPts = if (team == 'A') customPointsB else customPointsA
+            if (winByTwo) {
+                myPts + customIncrement >= maxPointsToWin && myPts - opPts >= 0
+            } else {
+                myPts + customIncrement >= maxPointsToWin
+            }
+        }
+    }
+
+    fun isSetPoint(team: Char): Boolean {
+        if (!isGamePoint(team)) return false
+        return if (team == 'A') setsA == 5 else setsB == 5
+    }
+
+    fun isMatchPoint(team: Char): Boolean {
+        if (!isSetPoint(team)) return false
+        return if (team == 'A') matchSetsA == 1 else matchSetsB == 1
+    }
+
+    // -------------------------------------------------------------------------
+    // Point mutation
+    // -------------------------------------------------------------------------
+
     @Synchronized
     fun addPoint(team: Char) {
         lastGameWinner = null
-
-        if (isDeuce) {
-            handleDeucePoint(team)
+        if (scoringMode == "standard") {
+            if (isDeuce) handleDeucePoint(team) else handleStandardPoint(team)
         } else {
-            handleNormalPoint(team)
+            handleCustomPoint(team)
         }
-
         onScoreChanged?.invoke()
     }
 
-    private fun handleNormalPoint(team: Char) {
+    private fun handleStandardPoint(team: Char) {
         if (team == 'A') {
             if (pointsA < 3) {
                 pointsA++
-                // Check for deuce: both at 40 (index 3)
-                if (pointsA == 3 && pointsB == 3) {
-                    isDeuce = true
-                }
-            } else {
-                // pointsA is already at 40 and pointsB < 40
-                winGame('A')
-            }
+                if (pointsA == 3 && pointsB == 3) isDeuce = true
+            } else winGame('A')
         } else {
             if (pointsB < 3) {
                 pointsB++
-                if (pointsA == 3 && pointsB == 3) {
-                    isDeuce = true
-                }
-            } else {
-                winGame('B')
-            }
+                if (pointsA == 3 && pointsB == 3) isDeuce = true
+            } else winGame('B')
         }
     }
 
     private fun handleDeucePoint(team: Char) {
         when {
-            advantageTeam == null -> {
-                // Deuce, someone gets advantage
-                advantageTeam = team
-            }
-            advantageTeam == team -> {
-                // Team with advantage wins the game
-                winGame(team)
-            }
-            else -> {
-                // Other team scored, back to deuce
-                advantageTeam = null
-            }
+            advantageTeam == null -> advantageTeam = team
+            advantageTeam == team -> winGame(team)
+            else -> advantageTeam = null
+        }
+    }
+
+    private fun handleCustomPoint(team: Char) {
+        if (team == 'A') customPointsA += customIncrement
+        else customPointsB += customIncrement
+
+        val myPts = if (team == 'A') customPointsA else customPointsB
+        val opPts = if (team == 'A') customPointsB else customPointsA
+
+        val reachedTarget = myPts >= maxPointsToWin
+        val clearByTwo = !winByTwo || (myPts - opPts >= 2)
+
+        if (reachedTarget && clearByTwo) {
+            winGame(team)
         }
     }
 
     private fun winGame(team: Char) {
         lastGameWinner = team
         if (team == 'A') setsA++ else setsB++
+        if (setsA == 6 || setsB == 6) winSet(team) else resetGame()
+    }
+
+    private fun winSet(team: Char) {
+        if (team == 'A') matchSetsA++ else matchSetsB++
+        setsA = 0; setsB = 0
         resetGame()
     }
 
     private fun resetGame() {
-        pointsA = 0
-        pointsB = 0
-        isDeuce = false
-        advantageTeam = null
+        pointsA = 0; pointsB = 0
+        customPointsA = 0; customPointsB = 0
+        isDeuce = false; advantageTeam = null
     }
 
-    /**
-     * Remove a point from the specified team (undo).
-     * Prevents negative values.
-     */
     @Synchronized
     fun removePoint(team: Char) {
         lastGameWinner = null
-
-        if (isDeuce) {
-            // In deuce state, undo means:
-            if (advantageTeam != null) {
-                // Remove advantage -> back to deuce
-                advantageTeam = null
-            } else {
-                // At deuce, go back: the undone team goes to 30 (index 2), other stays at 40
-                isDeuce = false
-                if (team == 'A') {
-                    pointsA = 2 // 30
-                    pointsB = 3 // 40
-                } else {
-                    pointsA = 3 // 40
-                    pointsB = 2 // 30
+        if (scoringMode == "standard") {
+            if (isDeuce) {
+                if (advantageTeam != null) advantageTeam = null
+                else {
+                    isDeuce = false
+                    if (team == 'A') { pointsA = 2; pointsB = 3 } else { pointsA = 3; pointsB = 2 }
                 }
+            } else {
+                if (team == 'A') { if (pointsA > 0) pointsA-- } else { if (pointsB > 0) pointsB-- }
             }
         } else {
-            if (team == 'A') {
-                if (pointsA > 0) pointsA--
-            } else {
-                if (pointsB > 0) pointsB--
-            }
+            if (team == 'A') { if (customPointsA > 0) customPointsA -= customIncrement }
+            else { if (customPointsB > 0) customPointsB -= customIncrement }
         }
-
         onScoreChanged?.invoke()
     }
 
-    /**
-     * Reset all scores to zero
-     */
     @Synchronized
     fun reset() {
-        pointsA = 0
-        pointsB = 0
-        setsA = 0
-        setsB = 0
-        isDeuce = false
-        advantageTeam = null
+        pointsA = 0; pointsB = 0
+        customPointsA = 0; customPointsB = 0
+        setsA = 0; setsB = 0
+        matchSetsA = 0; matchSetsB = 0
+        isDeuce = false; advantageTeam = null
         lastGameWinner = null
         onScoreChanged?.invoke()
     }
 
-    /**
-     * Get full state snapshot for JSON API response
-     */
     @Synchronized
-    fun toMap(): Map<String, Any?> {
-        return mapOf(
-            "scoreA" to getScoreDisplayA(),
-            "scoreB" to getScoreDisplayB(),
-            "setsA" to setsA,
-            "setsB" to setsB,
-            "isDeuce" to isDeuce,
-            "advantage" to advantageTeam?.toString(),
-            "status" to getStatusText()
-        )
-    }
+    fun toMap(): Map<String, Any?> = mapOf(
+        "scoreA" to getScoreDisplayA(),
+        "scoreB" to getScoreDisplayB(),
+        "setsA" to setsA,
+        "setsB" to setsB,
+        "matchSetsA" to matchSetsA,
+        "matchSetsB" to matchSetsB,
+        "isDeuce" to isDeuce,
+        "advantage" to advantageTeam?.toString(),
+        "status" to getStatusText(),
+        "scoringMode" to scoringMode
+    )
 }

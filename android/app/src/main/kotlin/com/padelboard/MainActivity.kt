@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var bottomInfoLayout: LinearLayout
     private lateinit var config: ConfigManager
     private lateinit var scoreState: ScoreState
+    private lateinit var soundManager: SoundManager
 
     private var httpServer: HttpCommandServer? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -79,6 +80,7 @@ class MainActivity : Activity() {
         qrCodeView = findViewById(R.id.qrCodeView)
         versionText = findViewById(R.id.versionText)
         bottomInfoLayout = findViewById(R.id.bottomInfoLayout)
+        soundManager = SoundManager(this, config)
         
         // Set version text
         try {
@@ -88,9 +90,14 @@ class MainActivity : Activity() {
                 @Suppress("DEPRECATION")
                 packageManager.getPackageInfo(packageName, 0).versionName
             }
-            versionText.text = "Padle Score v.$versionName."
+            versionText.text = "Padle Score v.$versionName"
         } catch (e: Exception) {
-            versionText.text = "Padle Score v.1.0.0."
+            versionText.text = "Padle Score v.2.0.0"
+        }
+
+        // Click version text to open settings immediately
+        versionText.setOnClickListener {
+            openConfig()
         }
 
         // Apply config
@@ -126,22 +133,83 @@ class MainActivity : Activity() {
     }
 
     private fun applyConfig() {
-        scoreboardView.teamAName = config.teamAName
-        scoreboardView.teamBName = config.teamBName
-        scoreboardView.colorA = config.colorA
-        scoreboardView.colorB = config.colorB
+        // Apply scoring mode to ScoreState
+        scoreState.scoringMode     = config.scoringMode
+        scoreState.customIncrement = config.customIncrement
+        scoreState.maxPointsToWin  = config.maxPointsToWin
+        scoreState.winByTwo        = config.winByTwo
+
+        // Apply visual config to ScoreboardView
+        scoreboardView.teamAName   = config.teamAName
+        scoreboardView.teamBName   = config.teamBName
+        scoreboardView.fontTypeface = config.fontTypeface
+        scoreboardView.enableWinEffect = config.enableWinEffect
+
+        // JSON theme overrides individual fields if valid
+        applyJsonTheme()
+
         scoreboardView.invalidate()
     }
 
+    private fun applyJsonTheme() {
+        val json = config.customThemeJson
+        try {
+            if (json.isNotBlank()) {
+                val obj = org.json.JSONObject(json)
+                scoreboardView.colorA    = parseColor(obj.optString("colorA"),    config.colorA)
+                scoreboardView.colorB    = parseColor(obj.optString("colorB"),    config.colorB)
+                scoreboardView.fontScale = obj.optDouble("fontScale", config.fontScale.toDouble()).toFloat()
+            } else {
+                scoreboardView.colorA    = config.colorA
+                scoreboardView.colorB    = config.colorB
+                scoreboardView.fontScale = config.fontScale
+            }
+        } catch (e: Exception) {
+            scoreboardView.colorA    = config.colorA
+            scoreboardView.colorB    = config.colorB
+            scoreboardView.fontScale = config.fontScale
+        }
+    }
+
+    private fun parseColor(value: String, default: Int): Int {
+        return try { android.graphics.Color.parseColor(value) } catch (e: Exception) { default }
+    }
+
+    // Track sets to detect set win
+    private var lastSetsA = 0
+    private var lastSetsB = 0
+
     private fun refreshScoreboard(changedTeam: Char? = null) {
+        val currentSetsA = scoreState.setsA
+        val currentSetsB = scoreState.setsB
+        
+        val setWon = currentSetsA > lastSetsA || currentSetsB > lastSetsB
+        
         scoreboardView.updateScore(
             newScoreA = scoreState.getScoreDisplayA(),
             newScoreB = scoreState.getScoreDisplayB(),
-            newSetsA = scoreState.setsA,
-            newSetsB = scoreState.setsB,
+            newSetsA = currentSetsA,
+            newSetsB = currentSetsB,
             newStatus = scoreState.getStatusText(),
             changedTeam = changedTeam
         )
+
+        if (changedTeam != null) {
+            scoreboardView.shake()
+            if (setWon) {
+                val winnerName = if (currentSetsA > lastSetsA) config.teamAName else config.teamBName
+                scoreboardView.celebrateSetWin(winnerName)
+                soundManager.playWinSet()
+            } else if (scoreState.isMatchPoint(changedTeam)) {
+                soundManager.playMatchPoint()
+            } else {
+                soundManager.playPoint()
+            }
+        }
+        
+        lastSetsA = currentSetsA
+        lastSetsB = currentSetsB
+        
         updateBottomInfoVisibility()
     }
     
@@ -195,24 +263,24 @@ class MainActivity : Activity() {
         
         scoreboardView.onResetLongPress = {
             scoreState.reset()
-            config.teamAName = ConfigManager.DEFAULT_TEAM_A
-            config.teamBName = ConfigManager.DEFAULT_TEAM_B
             applyConfig()
             refreshScoreboard()
+            soundManager.playUndo() // Use undo sound for reset
         }
     }
 
     // --- HTTP Server ---
 
     private fun startServer() {
+        httpServer?.stop()
+        httpServer = null
+        if (!config.enableHttpServer) return   // HTTP remote disabled in settings
         try {
-            httpServer?.stop()
             httpServer = HttpCommandServer(config.serverPort, scoreState, config) { cmd ->
                 if (cmd == "CONFIG_UPDATE") {
                     handler.post { applyConfig(); refreshScoreboard() }
                     return@HttpCommandServer
                 }
-                // Determine which team changed for animation
                 val team = when (cmd) {
                     "A_PLUS", "A_MINUS" -> 'A'
                     "B_PLUS", "B_MINUS" -> 'B'
@@ -223,7 +291,6 @@ class MainActivity : Activity() {
             httpServer?.start()
         } catch (e: Exception) {
             e.printStackTrace()
-            // Retry after 2 seconds
             handler.postDelayed({ startServer() }, 2000)
         }
     }
@@ -329,6 +396,28 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * V2.0: BLE HID keyboard dispatch.
+     * Routes single-character keystrokes from the ESP32-C3 remote
+     * based on the user-configured key bindings in ConfigManager.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (!config.enableBleHid) return super.dispatchKeyEvent(event)
+        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+
+        val ch = event.unicodeChar.toChar().lowercaseChar().toString()
+        if (ch.isBlank()) return super.dispatchKeyEvent(event)
+
+        when (ch) {
+            config.keyTeamAPlus  -> { scoreState.addPoint('A');    handler.post { refreshScoreboard('A') }; return true }
+            config.keyTeamAMinus -> { scoreState.removePoint('A'); handler.post { refreshScoreboard() };   return true }
+            config.keyTeamBPlus  -> { scoreState.addPoint('B');    handler.post { refreshScoreboard('B') }; return true }
+            config.keyTeamBMinus -> { scoreState.removePoint('B'); handler.post { refreshScoreboard() };   return true }
+            config.keyReset      -> { scoreState.reset(); applyConfig(); handler.post { refreshScoreboard() }; return true }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     // --- Hidden config (5 rapid taps) ---
 
     private fun handleTap() {
@@ -362,5 +451,6 @@ class MainActivity : Activity() {
         super.onDestroy()
         handler.removeCallbacks(watchdogRunnable)
         httpServer?.stop()
+        soundManager.release()
     }
 }

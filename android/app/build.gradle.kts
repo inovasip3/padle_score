@@ -11,12 +11,44 @@ android {
         applicationId = "com.padelboard"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 6
+        versionName = "2.0.1"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+        create("release") {
+            // Using debug keys for release just to make it installable for testing
+            // if the user doesn't have a keystore yet.
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
+    flavorDimensions += "version"
+    productFlavors {
+        create("legacy") {
+            dimension = "version"
+            minSdk = 24
+            versionNameSuffix = "-legacy"
+        }
+        create("modern") {
+            dimension = "version"
+            minSdk = 28
+            versionNameSuffix = "-modern"
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -25,6 +57,7 @@ android {
             )
         }
         debug {
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
         }
     }
