@@ -1,5 +1,8 @@
 # 🏓 Padel Scoreboard V2.1 - Setup Guide
 
+### 📑 Quick Links
+- [**Smart TV & ESP8266 Setup Guide**](TV_REMOTE_SETUP.md) — *Konfigurasi AP Mode, Hotspot, dan QR Code Remote.*
+
 ## 📦 System Components
 
 | Component | Purpose | Connection |
@@ -8,8 +11,6 @@
 | **Android APK V2.0** | Scoreboard app (Master Settings + Logic) | - |
 | **ESP32-C3 (NEW)** | Laser TOF Controller (Pro Version) | **BLE HID** (Bluetooth) |
 | **ESP8266 (Legacy)** | IR Sensor Controller | **WiFi** (HTTP) |
-
----
 
 ## 🔧 Part 1: Build & Install Android APK V2.0
 

@@ -18,6 +18,13 @@ class ScoreboardView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    init {
+        // Required for shadow layer rendering (setShadowLayer).
+        // MUST be set once in the constructor, NOT in onDraw() which would cause
+        // a new render buffer to be allocated on every single frame.
+        setLayerType(LAYER_TYPE_SOFTWARE, null)
+    }
+
     // --- Configuration (mutable from ConfigManager) ---
     var teamAName: String = "TEAM A"
     var teamBName: String = "TEAM B"
@@ -46,6 +53,8 @@ class ScoreboardView @JvmOverloads constructor(
     var scoreB: String = "0"
     var setsA: Int = 0
     var setsB: Int = 0
+    var matchSetsA: Int = 0
+    var matchSetsB: Int = 0
     var statusText: String = ""
 
     // --- Animation ---
@@ -106,6 +115,18 @@ class ScoreboardView @JvmOverloads constructor(
         typeface = Typeface.create("monospace", Typeface.BOLD)
     }
 
+    private var currentTypeface: Typeface = Typeface.create("monospace", Typeface.BOLD)
+
+    private fun refreshPaints() {
+        currentTypeface = Typeface.create(fontTypeface, Typeface.BOLD)
+        paintScoreA.color = colorA;    paintScoreA.typeface = currentTypeface
+        paintScoreB.color = colorB;    paintScoreB.typeface = currentTypeface
+        paintTeamNameA.color = colorA; paintTeamNameA.typeface = currentTypeface
+        paintTeamNameB.color = colorB; paintTeamNameB.typeface = currentTypeface
+        paintGlowA.color = colorA
+        paintGlowB.color = colorB
+    }
+
     private val paintGlowA = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = colorA
         style = Paint.Style.FILL
@@ -161,21 +182,28 @@ class ScoreboardView @JvmOverloads constructor(
     fun updateScore(
         newScoreA: String, newScoreB: String,
         newSetsA: Int, newSetsB: Int,
+        newMatchSetsA: Int = 0, newMatchSetsB: Int = 0,
         newStatus: String,
         changedTeam: Char? = null
     ) {
-        val aChanged = newScoreA != scoreA || newSetsA != setsA
-        val bChanged = newScoreB != scoreB || newSetsB != setsB
+        val aChanged = newScoreA != scoreA || newSetsA != setsA || newMatchSetsA != matchSetsA
+        val bChanged = newScoreB != scoreB || newSetsB != setsB || newMatchSetsB != matchSetsB
 
         scoreA = newScoreA
         scoreB = newScoreB
         setsA = newSetsA
         setsB = newSetsB
+        matchSetsA = newMatchSetsA
+        matchSetsB = newMatchSetsB
         statusText = newStatus
+
+        refreshPaints()
 
         if (aChanged || changedTeam == 'A') triggerGlow('A')
         if (bChanged || changedTeam == 'B') triggerGlow('B')
 
+        // Ensure both methods of invalidation are used to combat legacy UI hangs
+        postInvalidate()
         invalidate()
     }
 
@@ -249,15 +277,6 @@ class ScoreboardView @JvmOverloads constructor(
         canvas.save()
         canvas.translate(shakeX, shakeY)
 
-        // Update paint colors and typeface in case they changed from config
-        val tf = android.graphics.Typeface.create(fontTypeface, android.graphics.Typeface.BOLD)
-        paintScoreA.color = colorA;    paintScoreA.typeface = tf
-        paintScoreB.color = colorB;    paintScoreB.typeface = tf
-        paintTeamNameA.color = colorA; paintTeamNameA.typeface = tf
-        paintTeamNameB.color = colorB; paintTeamNameB.typeface = tf
-        paintGlowA.color = colorA
-        paintGlowB.color = colorB
-
         val halfW = w / 2f
         val centerAX = w * 0.25f
         val centerBX = w * 0.75f
@@ -324,9 +343,6 @@ class ScoreboardView @JvmOverloads constructor(
         // Apply shadow for LED glow effect
         paintScoreA.setShadowLayer(scoreSize * 0.15f, 0f, 0f, colorA)
         paintScoreB.setShadowLayer(scoreSize * 0.15f, 0f, 0f, colorB)
-
-        setLayerType(LAYER_TYPE_SOFTWARE, null) // Required for shadow layer
-
         canvas.drawText(scoreA, centerAX, scoreY, paintScoreA)
         canvas.drawText(scoreB, centerBX, scoreY, paintScoreB)
 
@@ -334,20 +350,36 @@ class ScoreboardView @JvmOverloads constructor(
         paintColon.textSize = colonSize
         canvas.drawText(":", halfW, scoreY - scoreSize * 0.15f, paintColon)
 
-        // --- Game Label ---
-        paintSetLabel.textSize = setLabelSize
-        canvas.drawText("GAMES", centerAX, setLabelY, paintSetLabel)
-        canvas.drawText("GAMES", centerBX, setLabelY, paintSetLabel)
+        // --- Set Labels ---
+        // --- Set Labels ---
+        val setsAX = w * 0.20f
+        val gamesAX = w * 0.38f
+        val gamesBX = w * 0.62f
+        val setsBX = w * 0.80f
 
-        // --- Set Scores ---
+        // Move them up slightly to avoid being covered by bottom QR overlay
+        val labelY = h * 0.75f
+        val scoreY_small = h * 0.86f
+
+        paintSetLabel.textSize = setLabelSize
+        canvas.drawText("SETS", setsAX, labelY, paintSetLabel)
+        canvas.drawText("GAMES", gamesAX, labelY, paintSetLabel)
+        
+        canvas.drawText("GAMES", gamesBX, labelY, paintSetLabel)
+        canvas.drawText("SETS", setsBX, labelY, paintSetLabel)
+
+        // --- Set/Game Scores ---
         paintSetScore.textSize = setScoreSize
+        
         paintSetScore.color = colorA
-        paintSetScore.setShadowLayer(setScoreSize * 0.1f, 0f, 0f, colorA)
-        canvas.drawText(setsA.toString(), centerAX, setScoreY, paintSetScore)
+        paintSetScore.setShadowLayer(setScoreSize * 0.12f, 0f, 0f, colorA)
+        canvas.drawText(matchSetsA.toString(), setsAX, scoreY_small, paintSetScore)
+        canvas.drawText(setsA.toString(), gamesAX, scoreY_small, paintSetScore)
 
         paintSetScore.color = colorB
-        paintSetScore.setShadowLayer(setScoreSize * 0.1f, 0f, 0f, colorB)
-        canvas.drawText(setsB.toString(), centerBX, setScoreY, paintSetScore)
+        paintSetScore.setShadowLayer(setScoreSize * 0.12f, 0f, 0f, colorB)
+        canvas.drawText(setsB.toString(), gamesBX, scoreY_small, paintSetScore)
+        canvas.drawText(matchSetsB.toString(), setsBX, scoreY_small, paintSetScore)
 
         // --- Status text (Deuce/Advantage) ---
         if (statusText.isNotEmpty()) {
@@ -390,7 +422,6 @@ class ScoreboardView @JvmOverloads constructor(
                 strokeWidth = h * 0.01f
                 setShadowLayer(20f, 0f, 0f, teamColor)
             }
-            setLayerType(LAYER_TYPE_SOFTWARE, null)
             canvas.drawLine(0f, bannerTop, w, bannerTop, borderPaint)
             canvas.drawLine(0f, bannerBottom, w, bannerBottom, borderPaint)
             

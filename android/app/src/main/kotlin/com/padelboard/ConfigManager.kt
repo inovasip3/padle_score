@@ -16,63 +16,75 @@ class ConfigManager(val context: Context) {
 
     companion object {
         // --- Team ---
-        private const val KEY_TEAM_A_NAME = "team_a_name"
-        private const val KEY_TEAM_B_NAME = "team_b_name"
+        const val KEY_TEAM_A_NAME = "team_a_name"
+        const val KEY_TEAM_B_NAME = "team_b_name"
         // --- Server ---
-        private const val KEY_SERVER_PORT = "server_port"
-        private const val KEY_PIN = "pin"
-        private const val KEY_ENABLE_HTTP = "enable_http_server"
-        private const val KEY_ENABLE_BLE_HID = "enable_ble_hid"
-        private const val KEY_ENABLE_SHUTTER_REMOTE = "enable_shutter_remote"
+        const val KEY_SERVER_PORT = "server_port"
+        const val KEY_PIN = "pin"
+        const val KEY_ENABLE_HTTP = "enable_http_server"
+        const val KEY_ENABLE_BLE_HID = "enable_ble_hid"
+        const val KEY_ENABLE_SHUTTER_REMOTE = "enable_shutter_remote"
+        const val KEY_SHOW_DEBUG_MSG = "show_debug_msg"
+
+        // --- Bluetooth Remote Mode (V2.3) ---
+        const val KEY_REMOTE_MODE = "remote_mode" // 1: Single, 2: Dual
+        const val KEY_REMOTE_SWP_MOD2 = "remote_swp_mod2"
+        const val KEY_REMOTE_A_DESC = "remote_a_desc"
+        const val KEY_REMOTE_B_DESC = "remote_b_desc"
+        const val KEY_REMOTE_LONG_PRESS_MS = "remote_long_press_ms"
+        const val KEY_REMOTE_DUAL_PRESS_MS = "remote_dual_press_ms"
+        const val KEY_REMOTE_RESET_ENABLED = "remote_reset_enabled"
         // --- Appearance ---
-        private const val KEY_COLOR_A = "color_a"
-        private const val KEY_COLOR_B = "color_b"
-        private const val KEY_FONT_SCALE = "font_scale"
-        private const val KEY_FONT_TYPEFACE = "font_typeface"
-        private const val KEY_ENABLE_WIN_EFFECT = "enable_win_effect"
-        private const val KEY_CUSTOM_THEME_JSON = "custom_theme_json"
+        const val KEY_COLOR_A = "color_a"
+        const val KEY_COLOR_B = "color_b"
+        const val KEY_FONT_SCALE = "font_scale"
+        const val KEY_FONT_TYPEFACE = "font_typeface"
+        const val KEY_ENABLE_WIN_EFFECT = "enable_win_effect"
+        const val KEY_CUSTOM_THEME_JSON = "custom_theme_json"
         // --- Audio ---
-        private const val KEY_ENABLE_VOICE_REF = "enable_voice_ref"
-        private const val KEY_SOUND_ENABLED = "sound_enabled"
-        private const val KEY_USE_LOVE_FOR_ZERO = "use_love_for_zero"
+        const val KEY_ENABLE_VOICE_REF = "enable_voice_ref"
+        const val KEY_SOUND_ENABLED = "sound_enabled"
+        const val KEY_USE_LOVE_FOR_ZERO = "use_love_for_zero"
+        const val KEY_ENABLE_APPLAUSE = "enable_applause"
         
         // --- Photos ---
-        private const val KEY_ENABLE_PHOTOS = "enable_photos"
-        private const val KEY_PHOTO_SIZE = "photo_size"
-        private const val KEY_PHOTO_Y_POS = "photo_y_pos"
-        private const val KEY_PHOTO_X_POS_A = "photo_x_pos_a" // Percentage from centerAX
-        private const val KEY_PHOTO_X_POS_B = "photo_x_pos_b" // Percentage from centerBX
+        const val KEY_ENABLE_PHOTOS = "enable_photos"
+        const val KEY_PHOTO_SIZE = "photo_size"
+        const val KEY_PHOTO_Y_POS = "photo_y_pos"
+        const val KEY_PHOTO_X_POS_A = "photo_x_pos_a" // Percentage from centerAX
+        const val KEY_PHOTO_X_POS_B = "photo_x_pos_b" // Percentage from centerBX
+        const val KEY_ALLOW_USER_UPLOAD_PHOTO = "allow_user_upload_photo"
         // --- Scoring Preset ---
-        private const val KEY_SCORING_PRESET = "scoring_preset" // "standard", "golden_point", "fast_short", "custom_1", "custom_2", "custom_3"
+        const val KEY_SCORING_PRESET = "scoring_preset" // "standard", "golden_point", "fast_short", "custom_1", "custom_2", "custom_3"
         
         // --- Point Rule ---
-        private const val KEY_USE_GOLDEN_POINT = "use_golden_point"
+        const val KEY_USE_GOLDEN_POINT = "use_golden_point"
         
         // --- Game Rule ---
-        private const val KEY_GAMES_TO_WIN_SET = "games_to_win_set"
-        private const val KEY_WIN_BY_2_GAMES = "win_by_2_games"
+        const val KEY_GAMES_TO_WIN_SET = "games_to_win_set"
+        const val KEY_WIN_BY_2_GAMES = "win_by_2_games"
         
         // --- Tie Break ---
-        private const val KEY_USE_TIE_BREAK = "use_tie_break"
-        private const val KEY_TIE_BREAK_AT = "tie_break_at"
-        private const val KEY_TIE_BREAK_TARGET = "tie_break_target"
-        private const val KEY_TIE_BREAK_WIN_BY_2 = "tie_break_win_by_2"
+        const val KEY_USE_TIE_BREAK = "use_tie_break"
+        const val KEY_TIE_BREAK_AT = "tie_break_at"
+        const val KEY_TIE_BREAK_TARGET = "tie_break_target"
+        const val KEY_TIE_BREAK_WIN_BY_2 = "tie_break_win_by_2"
         
         // --- Set Rule ---
-        private const val KEY_SETS_TO_WIN_MATCH = "sets_to_win_match"
-        private const val KEY_FINAL_SET_SUPER_TB = "final_set_super_tb"
-        private const val KEY_SUPER_TB_TARGET = "super_tb_target"
+        const val KEY_SETS_TO_WIN_MATCH = "sets_to_win_match"
+        const val KEY_FINAL_SET_SUPER_TB = "final_set_super_tb"
+        const val KEY_SUPER_TB_TARGET = "super_tb_target"
 
         // --- Custom Slots JSON ---
-        private const val KEY_CUSTOM_1_JSON = "custom_1_json"
-        private const val KEY_CUSTOM_2_JSON = "custom_2_json"
-        private const val KEY_CUSTOM_3_JSON = "custom_3_json"
+        const val KEY_CUSTOM_1_JSON = "custom_1_json"
+        const val KEY_CUSTOM_2_JSON = "custom_2_json"
+        const val KEY_CUSTOM_3_JSON = "custom_3_json"
         // --- BLE Key Bindings ---
-        private const val KEY_KB_TEAM_A_PLUS = "kb_team_a_plus"
-        private const val KEY_KB_TEAM_A_MINUS = "kb_team_a_minus"
-        private const val KEY_KB_TEAM_B_PLUS = "kb_team_b_plus"
-        private const val KEY_KB_TEAM_B_MINUS = "kb_team_b_minus"
-        private const val KEY_KB_RESET = "kb_reset"
+        const val KEY_KB_TEAM_A_PLUS = "kb_team_a_plus"
+        const val KEY_KB_TEAM_A_MINUS = "kb_team_a_minus"
+        const val KEY_KB_TEAM_B_PLUS = "kb_team_b_plus"
+        const val KEY_KB_TEAM_B_MINUS = "kb_team_b_minus"
+        const val KEY_KB_RESET = "kb_reset"
 
         // --- Defaults ---
         const val DEFAULT_TEAM_A = "TEAM A"
@@ -96,6 +108,16 @@ class ConfigManager(val context: Context) {
         const val DEFAULT_ENABLE_BLE_HID = true
         const val DEFAULT_ENABLE_SHUTTER_REMOTE = true
         const val DEFAULT_SCORING_PRESET = "standard"
+        const val DEFAULT_ALLOW_USER_UPLOAD_PHOTO = false
+        const val DEFAULT_SHOW_DEBUG_MSG = false
+
+        const val DEFAULT_REMOTE_MODE = 1
+        const val DEFAULT_REMOTE_SWP_MOD2 = false
+        const val DEFAULT_REMOTE_A_DESC = ""
+        const val DEFAULT_REMOTE_B_DESC = ""
+        const val DEFAULT_REMOTE_LONG_PRESS_MS = 600
+        const val DEFAULT_REMOTE_DUAL_PRESS_MS = 2000
+        const val DEFAULT_REMOTE_RESET_ENABLED = true
         
         const val DEFAULT_USE_GOLDEN_POINT = false
         const val DEFAULT_GAMES_TO_WIN_SET = 6
@@ -107,12 +129,22 @@ class ConfigManager(val context: Context) {
         const val DEFAULT_SETS_TO_WIN_MATCH = 2 // Best of 3 requires 2 sets to win
         const val DEFAULT_FINAL_SET_SUPER_TB = false
         const val DEFAULT_SUPER_TB_TARGET = 10
+        const val DEFAULT_ENABLE_APPLAUSE = true
         const val DEFAULT_KB_A_PLUS = "a"
         const val DEFAULT_KB_A_MINUS = "s"
         const val DEFAULT_KB_B_PLUS = "b"
         const val DEFAULT_KB_B_MINUS = "d"
         const val DEFAULT_KB_RESET = "r"
 
+    }
+
+    /**
+     * Perform multiple SharedPreferences writes atomically in a single disk operation.
+     * Prevents 20 separate disk writes when saving all settings at once.
+     * Usage: config.saveBatch { putString(KEY_X, val1).putInt(KEY_Y, val2) }
+     */
+    fun saveBatch(block: android.content.SharedPreferences.Editor.() -> Unit) {
+        prefs.edit().apply(block).apply()
     }
 
     // --- Team ---
@@ -144,6 +176,10 @@ class ConfigManager(val context: Context) {
     var enableShutterRemote: Boolean
         get() = prefs.getBoolean(KEY_ENABLE_SHUTTER_REMOTE, DEFAULT_ENABLE_SHUTTER_REMOTE)
         set(value) = prefs.edit().putBoolean(KEY_ENABLE_SHUTTER_REMOTE, value).apply()
+
+    var showDebugMsg: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_DEBUG_MSG, DEFAULT_SHOW_DEBUG_MSG)
+        set(value) = prefs.edit().putBoolean(KEY_SHOW_DEBUG_MSG, value).apply()
 
     // --- Appearance ---
     var colorA: Int
@@ -187,6 +223,10 @@ class ConfigManager(val context: Context) {
     var useLoveForZero: Boolean
         get() = prefs.getBoolean(KEY_USE_LOVE_FOR_ZERO, DEFAULT_USE_LOVE_FOR_ZERO)
         set(value) = prefs.edit().putBoolean(KEY_USE_LOVE_FOR_ZERO, value).apply()
+
+    var enableApplause: Boolean
+        get() = prefs.getBoolean(KEY_ENABLE_APPLAUSE, DEFAULT_ENABLE_APPLAUSE)
+        set(value) = prefs.edit().putBoolean(KEY_ENABLE_APPLAUSE, value).apply()
         
     // --- Photos ---
     var enablePhotos: Boolean
@@ -208,6 +248,10 @@ class ConfigManager(val context: Context) {
     var photoXPosB: Int
         get() = prefs.getInt(KEY_PHOTO_X_POS_B, DEFAULT_PHOTO_X_POS_B)
         set(value) = prefs.edit().putInt(KEY_PHOTO_X_POS_B, value).apply()
+
+    var allowUserUploadPhoto: Boolean
+        get() = prefs.getBoolean(KEY_ALLOW_USER_UPLOAD_PHOTO, DEFAULT_ALLOW_USER_UPLOAD_PHOTO)
+        set(value) = prefs.edit().putBoolean(KEY_ALLOW_USER_UPLOAD_PHOTO, value).apply()
 
     // --- Scoring Rules ---
     var scoringPreset: String
@@ -369,4 +413,33 @@ class ConfigManager(val context: Context) {
     var keyReset: String
         get() = prefs.getString(KEY_KB_RESET, DEFAULT_KB_RESET) ?: DEFAULT_KB_RESET
         set(value) = prefs.edit().putString(KEY_KB_RESET, value.take(1).lowercase()).apply()
+
+    // --- Bluetooth Remote Mode Properties ---
+    var remoteMode: Int
+        get() = prefs.getInt(KEY_REMOTE_MODE, DEFAULT_REMOTE_MODE)
+        set(value) = prefs.edit().putInt(KEY_REMOTE_MODE, value).apply()
+
+    var remoteSwapMod2: Boolean
+        get() = prefs.getBoolean(KEY_REMOTE_SWP_MOD2, DEFAULT_REMOTE_SWP_MOD2)
+        set(value) = prefs.edit().putBoolean(KEY_REMOTE_SWP_MOD2, value).apply()
+
+    var remoteADesc: String
+        get() = prefs.getString(KEY_REMOTE_A_DESC, DEFAULT_REMOTE_A_DESC) ?: DEFAULT_REMOTE_A_DESC
+        set(value) = prefs.edit().putString(KEY_REMOTE_A_DESC, value).apply()
+
+    var remoteBDesc: String
+        get() = prefs.getString(KEY_REMOTE_B_DESC, DEFAULT_REMOTE_B_DESC) ?: DEFAULT_REMOTE_B_DESC
+        set(value) = prefs.edit().putString(KEY_REMOTE_B_DESC, value).apply()
+
+    var remoteLongPressMs: Int
+        get() = prefs.getInt(KEY_REMOTE_LONG_PRESS_MS, DEFAULT_REMOTE_LONG_PRESS_MS)
+        set(value) = prefs.edit().putInt(KEY_REMOTE_LONG_PRESS_MS, value).apply()
+
+    var remoteDualPressMs: Int
+        get() = prefs.getInt(KEY_REMOTE_DUAL_PRESS_MS, DEFAULT_REMOTE_DUAL_PRESS_MS)
+        set(value) = prefs.edit().putInt(KEY_REMOTE_DUAL_PRESS_MS, value).apply()
+
+    var remoteResetEnabled: Boolean
+        get() = prefs.getBoolean(KEY_REMOTE_RESET_ENABLED, DEFAULT_REMOTE_RESET_ENABLED)
+        set(value) = prefs.edit().putBoolean(KEY_REMOTE_RESET_ENABLED, value).apply()
 }

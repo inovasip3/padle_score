@@ -11,8 +11,8 @@ android {
         applicationId = "com.padelboard"
         minSdk = 24
         targetSdk = 34
-        versionCode = 9
-        versionName = "2.2.0"
+        versionCode = 15
+        versionName = "2.3.5"
     }
 
     signingConfigs {
@@ -36,8 +36,8 @@ android {
     productFlavors {
         create("legacy") {
             dimension = "version"
-            minSdk = 25
-            versionName = "2.1.0-android7"
+            minSdk = 24
+            versionName = "2.3.5-legacy"
         }
         create("modern") {
             dimension = "version"

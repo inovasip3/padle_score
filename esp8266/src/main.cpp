@@ -1,93 +1,18 @@
-/*
- * ============================================================
- *  PADEL SCOREBOARD - ESP8266 IR SENSOR BUTTON CONTROLLER
- * ============================================================
- * 
- * Uses 2x IR line detection sensors as touchless switch buttons.
- * When a hand passes near the IR sensor, it triggers a score command.
- * 
- * WIRING:
- *   IR Sensor LEFT  (Team A) → D1 (GPIO5)  - Digital OUT
- *   IR Sensor RIGHT (Team B) → D2 (GPIO4)  - Digital OUT
- *   Status LED               → D4 (GPIO2)  - Built-in LED
- *   
- *   IR Sensors: VCC → 3.3V, GND → GND, OUT → Dx
- *   
- * IR LINE DETECTION MODULE (e.g. TCRT5000, HW-201):
- *   - Output LOW  when object/hand is detected (near)
- *   - Output HIGH when no object (clear)
- *   - Adjust sensitivity via onboard potentiometer
- *
- * BEHAVIOR:
- *   Short trigger (<500ms):   LEFT → A_PLUS,  RIGHT → B_PLUS
- *   Long trigger (≥1500ms):   LEFT → A_MINUS, RIGHT → B_MINUS  
- *   Both triggered (≥1500ms): RESET
- *
- * COMMUNICATION:
- *   HTTP GET to Android TV Box on local WiFi
- *   http://<ANDROID_IP>:<PORT>/cmd?c=<COMMAND>
- * 
- * ============================================================
- */
-
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
 
-// ============================================================
-//  CONFIGURATION - Edit these values for your setup
-// ============================================================
+#include "config.h"
+#include "ConfigManager.h"
+#include "config_portal.h"
 
-// WiFi credentials (can also be set in platformio.ini build_flags)
-#ifndef WIFI_SSID
-  #define WIFI_SSID     "WIFI_SSD"
-#endif
-#ifndef WIFI_PASS
-  #define WIFI_PASS     "password"
-#endif
-
-// Android TV Box IP and port
-#ifndef ANDROID_IP
-  #define ANDROID_IP    "192.168.2.106"
-#endif
-#ifndef ANDROID_PORT
-  #define ANDROID_PORT  8888
-#endif
-
-// ============================================================
-//  PIN DEFINITIONS
-// ============================================================
-
-#define PIN_SENSOR_LEFT   5     // GPIO5 (D1) - IR sensor for Team A
-#define PIN_SENSOR_RIGHT  4     // GPIO4 (D2) - IR sensor for Team B
-#define PIN_LED           2     // GPIO2 (D4) - Built-in LED (active LOW)
-#define PIN_BUZZER        14    // GPIO14 (D5) - Active Buzzer (active HIGH)
-
-// ============================================================
-//  HELPER: BUZZER TONE
-// ============================================================
-void triggerBuzzer(int durationMs, int count = 1) {
-    for (int i = 0; i < count; i++) {
-        digitalWrite(PIN_BUZZER, HIGH);
-        delay(durationMs);
-        digitalWrite(PIN_BUZZER, LOW);
-        if (count > 1 && i < count - 1) delay(50);
-    }
-}
-
-// ============================================================
-//  TIMING CONSTANTS
-// ============================================================
-
-#define SHORT_PRESS_MAX   500     // Max ms for short press
-#define LONG_PRESS_MIN    1500    // Min ms for long press
-#define DUAL_PRESS_WINDOW 300     // Max ms between two sensors triggering
-#define DEBOUNCE_MS       50      // Debounce time in ms
-#define SEND_COOLDOWN_MS  500     // Min time between consecutive sends
-#define WIFI_RETRY_MS     5000    // WiFi reconnect interval
-#define HTTP_TIMEOUT_MS   2000    // HTTP request timeout
-#define HTTP_RETRIES      3       // Number of retry attempts
+// Structured Logging Macro (Matching d1_mini pattern)
+#define LOG(msg) Serial.println(F("[INFO] " msg))
+#define LOG_VAL(label, val) { Serial.print(F("[INFO] ")); Serial.print(F(label)); Serial.print(F(": ")); Serial.println(val); }
+#define LOG_ERR(msg) Serial.println(F("[ERR]  " msg))
 
 // ============================================================
 //  STATE VARIABLES
@@ -110,10 +35,50 @@ unsigned long lastSendTime = 0;
 bool leftCommandSent = false;
 bool rightCommandSent = false;
 bool dualCommandSent = false;
+unsigned long dualHoldStart = 0;
+bool isBlinking = false;
 
-// WiFi
+// WiFi & App Connection
 unsigned long lastWifiCheck = 0;
+unsigned long lastAppCheck = 0;
+bool appReady = false;
 WiFiClient wifiClient;
+
+// Server & DNS
+DNSServer dnsServer;
+ESP8266WebServer server(80);
+bool setupMode = false;
+
+// LED & Buzzer Feedback States
+struct FeedbackState {
+    bool active = false;
+    unsigned long startTime = 0;
+    int type = 0; // 0: Success, 1: Error
+    bool ledA = false;
+    bool ledB = false;
+    bool readyLed = false;
+    int step = 0;
+};
+FeedbackState feedback;
+
+struct BuzzerState {
+    bool active = false;
+    unsigned long startTime = 0;
+    int count = 0;
+    int currentCount = 0;
+    int duration = 0;
+    bool isOn = false;
+};
+BuzzerState bzState;
+
+// WiFi Connection State
+bool isWifiConnecting = false;
+unsigned long lastInternalBlink = 0;
+bool internalLedState = HIGH;
+
+// LED State Logic
+enum ReadyLEDState { LED_FAST, LED_1_8 };
+ReadyLEDState currentLEDState = LED_FAST;
 
 // ============================================================
 //  FUNCTION PROTOTYPES
@@ -123,8 +88,17 @@ void maintainWiFi();
 void readSensors();
 void processButtons();
 void sendCommand(const char* cmd);
-void blinkSuccess();
-void blinkError();
+void checkAppConnection();
+void startFeedback(int type, bool a, bool b, bool ready);
+void updateFeedback();
+void triggerBuzzerAsync(int durationMs, int count = 1);
+void updateBuzzer();
+void playReadyMelody();
+void updateReadyLED();
+void startSetupMode();
+void handleRoot();
+void handleSave();
+void handleNotFound();
 
 // ============================================================
 //  SETUP
@@ -132,21 +106,38 @@ void blinkError();
 
 void setup() {
     Serial.begin(115200);
-    Serial.println();
-    Serial.println(F("================================"));
-    Serial.println(F(" PADEL SCOREBOARD CONTROLLER"));
-    Serial.println(F(" IR Sensor Touch-Free Buttons"));
-    Serial.println(F("================================"));
+    delay(500);
+    LOG("Padel Scoreboard Booting...");
+    LOG_VAL("Version", VERSION);
     
     // Configure pins
     pinMode(PIN_SENSOR_LEFT, INPUT);
     pinMode(PIN_SENSOR_RIGHT, INPUT);
-    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_LED_INTERNAL, OUTPUT);
+    pinMode(PIN_LED_A, OUTPUT);
+    pinMode(PIN_LED_B, OUTPUT);
+    pinMode(PIN_LED_READY, OUTPUT);
     pinMode(PIN_BUZZER, OUTPUT);
-    digitalWrite(PIN_LED, HIGH); // LED off (active LOW)
-    digitalWrite(PIN_BUZZER, LOW);
     
-    // Connect to WiFi
+    digitalWrite(PIN_LED_INTERNAL, HIGH); // Off
+    digitalWrite(PIN_LED_A, LOW);
+    digitalWrite(PIN_LED_B, LOW);
+    digitalWrite(PIN_LED_READY, LOW);
+    digitalWrite(PIN_BUZZER, LOW);
+
+    // Initialize Config
+    cfgManager.begin();
+
+    // CHECK FOR SETUP MODE (Wait a bit for sensors to stabilize)
+    delay(100);
+    if (digitalRead(PIN_SENSOR_LEFT) == LOW && digitalRead(PIN_SENSOR_RIGHT) == LOW) {
+        LOG("!!! SETUP MODE TRIGGERED !!!");
+        setupMode = true;
+        startSetupMode();
+        return; 
+    }
+    
+    // Normal mode
     connectWiFi();
 }
 
@@ -155,17 +146,35 @@ void setup() {
 // ============================================================
 
 void loop() {
-    // Ensure WiFi stays connected
+    if (setupMode) {
+        dnsServer.processNextRequest();
+        server.handleClient();
+        
+        digitalWrite(PIN_LED_READY, HIGH); // Steady ON for AP Mode
+        
+        static unsigned long lastSetupBlink = 0;
+        if (millis() - lastSetupBlink > 200) {
+            lastSetupBlink = millis();
+            bool s = digitalRead(PIN_LED_A);
+            digitalWrite(PIN_LED_A, !s);
+            digitalWrite(PIN_LED_B, s);
+        }
+        return;
+    }
+
     maintainWiFi();
     
-    // Read sensors with debounce
+    unsigned long now = millis();
+    if (now - lastAppCheck >= APP_CHECK_INTERVAL) {
+        lastAppCheck = now;
+        checkAppConnection();
+    }
+    
+    updateReadyLED();
+    updateFeedback();
+    updateBuzzer();
     readSensors();
-    
-    // Process button logic
     processButtons();
-    
-    // Small delay to prevent CPU hogging
-    delay(5);
 }
 
 // ============================================================
@@ -173,90 +182,142 @@ void loop() {
 // ============================================================
 
 void connectWiFi() {
-    Serial.print(F("Connecting to WiFi: "));
-    Serial.println(WIFI_SSID);
-    
+    if (cfgManager.config.wifi_ssid == "") {
+        LOG_ERR("No WiFi SSID configured.");
+        return;
+    }
+
+    LOG_VAL("Connecting to", cfgManager.config.wifi_ssid);
     WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.persistent(true);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    
-    // Blink LED while connecting
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 60) {
-        digitalWrite(PIN_LED, !digitalRead(PIN_LED));
-        delay(250);
-        Serial.print(".");
-        attempts++;
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-        digitalWrite(PIN_LED, LOW); // LED on = connected
-        Serial.println();
-        Serial.print(F("Connected! IP: "));
-        Serial.println(WiFi.localIP());
-        Serial.print(F("Target: "));
-        Serial.print(ANDROID_IP);
-        Serial.print(F(":"));
-        Serial.println(ANDROID_PORT);
-        
-        // Quick blink to indicate success
-        for (int i = 0; i < 6; i++) {
-            digitalWrite(PIN_LED, !digitalRead(PIN_LED));
-            delay(100);
-        }
-        digitalWrite(PIN_LED, LOW); // LED on
-    } else {
-        Serial.println(F("\nWiFi connection failed! Will retry..."));
-        digitalWrite(PIN_LED, HIGH); // LED off
-    }
+    WiFi.begin(cfgManager.config.wifi_ssid.c_str(), cfgManager.config.wifi_pass.c_str());
+    isWifiConnecting = true;
 }
 
 void maintainWiFi() {
-    if (WiFi.status() != WL_CONNECTED) {
+    static bool lastConnected = false;
+    bool connected = (WiFi.status() == WL_CONNECTED);
+
+    if (connected) {
+        if (!lastConnected) {
+            LOG_VAL("Connected! IP", WiFi.localIP().toString());
+            digitalWrite(PIN_LED_INTERNAL, LOW); // LED on = connected
+            isWifiConnecting = false;
+            lastConnected = true;
+            checkAppConnection(); // Verify app immediately on connection
+        }
+    } else {
+        if (lastConnected) {
+            LOG_ERR("WiFi lost!");
+            digitalWrite(PIN_LED_INTERNAL, HIGH);
+            appReady = false;
+            lastConnected = false;
+        }
+
         unsigned long now = millis();
+        // Internal LED Blinking while connecting
+        if (now - lastInternalBlink >= 250) {
+            lastInternalBlink = now;
+            internalLedState = !internalLedState;
+            digitalWrite(PIN_LED_INTERNAL, internalLedState);
+        }
+
         if (now - lastWifiCheck >= WIFI_RETRY_MS) {
             lastWifiCheck = now;
-            Serial.println(F("WiFi lost, reconnecting..."));
-            connectWiFi();
+            LOG("Attempting WiFi reconnection...");
+            WiFi.begin(cfgManager.config.wifi_ssid.c_str(), cfgManager.config.wifi_pass.c_str());
+            isWifiConnecting = true;
         }
     }
 }
 
 // ============================================================
-//  SENSOR READING (with debounce)
+//  APP CONNECTION CHECK
 // ============================================================
+
+void checkAppConnection() {
+    if (WiFi.status() != WL_CONNECTED) {
+        appReady = false;
+        digitalWrite(PIN_LED_READY, LOW);
+        return;
+    }
+
+    WiFiClient client;
+    client.setTimeout(1000);
+    
+    if (client.connect(cfgManager.config.android_ip.c_str(), cfgManager.config.android_port)) {
+        if (!appReady) {
+            LOG(">>> Padle Score App is READY!");
+            playReadyMelody();
+        }
+        appReady = true;
+        client.stop();
+    } else {
+        if (appReady) {
+            LOG_ERR(">>> Padle Score App DISCONNECTED!");
+            triggerBuzzerAsync(500); 
+        }
+        appReady = false;
+    }
+}
+
+// ============================================================
+//  SENSORS & BUTTONS
+// ============================================================
+
+void triggerBuzzerAsync(int durationMs, int count) {
+    bzState.active = true;
+    bzState.duration = durationMs;
+    bzState.count = count;
+    bzState.currentCount = 0;
+    bzState.startTime = 0; // Trigger immediate start in update
+    bzState.isOn = false;
+}
+
+void updateBuzzer() {
+    if (!bzState.active) return;
+
+    unsigned long now = millis();
+    if (!bzState.isOn) {
+        if (bzState.currentCount < bzState.count) {
+            if (bzState.startTime == 0 || now - bzState.startTime >= 50) { // 50ms pause between beeps
+                digitalWrite(PIN_BUZZER, HIGH);
+                bzState.isOn = true;
+                bzState.startTime = now;
+            }
+        } else {
+            bzState.active = false;
+        }
+    } else {
+        if (now - bzState.startTime >= (unsigned long)bzState.duration) {
+            digitalWrite(PIN_BUZZER, LOW);
+            bzState.isOn = false;
+            bzState.startTime = now;
+            bzState.currentCount++;
+        }
+    }
+}
 
 void readSensors() {
     unsigned long now = millis();
     
-    // Read left sensor with debounce
     bool leftRaw = digitalRead(PIN_SENSOR_LEFT);
-    if (leftRaw != leftLastState) {
-        leftDebounceTime = now;
-    }
+    if (leftRaw != leftLastState) leftDebounceTime = now;
     if ((now - leftDebounceTime) > DEBOUNCE_MS) {
-        // IR sensor: LOW = object detected (triggered)
         bool newState = (leftRaw == LOW);
         if (newState != leftTriggered) {
             leftTriggered = newState;
             if (leftTriggered) {
                 leftTriggerStart = now;
                 leftCommandSent = false;
-                Serial.println(F("LEFT sensor: TRIGGERED"));
-                triggerBuzzer(80); // Quick feedback beep
-            } else {
-                Serial.println(F("LEFT sensor: RELEASED"));
+                LOG("LEFT sensor: TRIGGERED");
+                triggerBuzzerAsync(80);
             }
         }
     }
     leftLastState = leftRaw;
     
-    // Read right sensor with debounce
     bool rightRaw = digitalRead(PIN_SENSOR_RIGHT);
-    if (rightRaw != rightLastState) {
-        rightDebounceTime = now;
-    }
+    if (rightRaw != rightLastState) rightDebounceTime = now;
     if ((now - rightDebounceTime) > DEBOUNCE_MS) {
         bool newState = (rightRaw == LOW);
         if (newState != rightTriggered) {
@@ -264,201 +325,238 @@ void readSensors() {
             if (rightTriggered) {
                 rightTriggerStart = now;
                 rightCommandSent = false;
-                Serial.println(F("RIGHT sensor: TRIGGERED"));
-                triggerBuzzer(80); // Quick feedback beep
-            } else {
-                Serial.println(F("RIGHT sensor: RELEASED"));
+                LOG("RIGHT sensor: TRIGGERED");
+                triggerBuzzerAsync(80);
             }
         }
     }
     rightLastState = rightRaw;
-}
 
-// ============================================================
-//  BUTTON LOGIC PROCESSING
-// ============================================================
+    if (!isBlinking) {
+        digitalWrite(PIN_LED_A, leftTriggered ? HIGH : LOW);
+        digitalWrite(PIN_LED_B, rightTriggered ? HIGH : LOW);
+    }
+}
 
 void processButtons() {
     unsigned long now = millis();
-    
-    // Cooldown check
     if (now - lastSendTime < SEND_COOLDOWN_MS) return;
     
-    // --- DUAL PRESS DETECTION ---
-    if (leftTriggered && rightTriggered && !dualCommandSent) {
-        // Check if both were triggered within the allowed window
-        unsigned long timeDiff = 0;
-        if (leftTriggerStart > rightTriggerStart) {
-            timeDiff = leftTriggerStart - rightTriggerStart;
-        } else {
-            timeDiff = rightTriggerStart - leftTriggerStart;
+    if (leftTriggered && rightTriggered) {
+        if (dualHoldStart == 0) dualHoldStart = now;
+        if (!dualCommandSent && (now - dualHoldStart >= LONG_PRESS_MIN)) {
+            LOG(">>> DUAL LONG PRESS -> RESET");
+            sendCommand("RESET");
+            dualCommandSent = true;
+            leftCommandSent = true;
+            rightCommandSent = true;
         }
-        
-        if (timeDiff <= DUAL_PRESS_WINDOW) {
-            // Both triggered nearly simultaneously
-            unsigned long earlierStart = min(leftTriggerStart, rightTriggerStart);
-            unsigned long holdDuration = now - earlierStart;
-            
-            if (holdDuration >= LONG_PRESS_MIN) {
-                // DUAL LONG PRESS → RESET
-                Serial.println(F(">>> DUAL LONG PRESS → RESET"));
-                sendCommand("RESET");
-                dualCommandSent = true;
-                leftCommandSent = true;
-                rightCommandSent = true;
-            }
-        }
-        return; // Don't process individual buttons while both are triggered
+        return;
+    } else {
+        dualHoldStart = 0;
     }
     
-    // Reset dual flag when both released
-    if (!leftTriggered && !rightTriggered) {
-        dualCommandSent = false;
-    }
+    if (!leftTriggered && !rightTriggered) dualCommandSent = false;
     
-    // --- LEFT SENSOR (Team A) ---
     if (!leftTriggered && leftTriggerStart > 0 && !leftCommandSent) {
         unsigned long duration = now - leftTriggerStart;
-        // Released - check duration (but only if it was truly released, not dual)
-        if (!rightTriggered || (rightTriggerStart == 0)) {
-            if (duration < SHORT_PRESS_MAX) {
-                Serial.println(F(">>> LEFT SHORT → A_PLUS"));
-                sendCommand("A_PLUS");
-            }
-            // Long press on release not needed, handled below
+        if (!rightTriggered) {
+            if (duration < SHORT_PRESS_MAX) sendCommand("A_PLUS");
         }
         leftCommandSent = true;
         leftTriggerStart = 0;
     }
     
-    // Left long press (still held)
     if (leftTriggered && !leftCommandSent && !rightTriggered) {
-        unsigned long duration = now - leftTriggerStart;
-        if (duration >= LONG_PRESS_MIN) {
-            Serial.println(F(">>> LEFT LONG → A_MINUS"));
+        if (now - leftTriggerStart >= LONG_PRESS_MIN) {
             sendCommand("A_MINUS");
             leftCommandSent = true;
         }
     }
     
-    // --- RIGHT SENSOR (Team B) ---
     if (!rightTriggered && rightTriggerStart > 0 && !rightCommandSent) {
         unsigned long duration = now - rightTriggerStart;
-        if (!leftTriggered || (leftTriggerStart == 0)) {
-            if (duration < SHORT_PRESS_MAX) {
-                Serial.println(F(">>> RIGHT SHORT → B_PLUS"));
-                sendCommand("B_PLUS");
-            }
+        if (!leftTriggered) {
+            if (duration < SHORT_PRESS_MAX) sendCommand("B_PLUS");
         }
         rightCommandSent = true;
         rightTriggerStart = 0;
     }
     
-    // Right long press (still held)
     if (rightTriggered && !rightCommandSent && !leftTriggered) {
-        unsigned long duration = now - rightTriggerStart;
-        if (duration >= LONG_PRESS_MIN) {
-            Serial.println(F(">>> RIGHT LONG → B_MINUS"));
+        if (now - rightTriggerStart >= LONG_PRESS_MIN) {
             sendCommand("B_MINUS");
             rightCommandSent = true;
         }
     }
 }
 
-// ============================================================
-//  HTTP COMMAND SENDER (with retry)
-// ============================================================
-
 void sendCommand(const char* cmd) {
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println(F("WiFi not connected, cannot send command"));
-        blinkError();
+    bool feedA = strstr(cmd, "A_") || strstr(cmd, "RESET");
+    bool feedB = strstr(cmd, "B_") || strstr(cmd, "RESET");
+    
+    String finalCmd = cmd;
+    if (cfgManager.config.swap_sensors) {
+        if (strstr(cmd, "A_")) finalCmd.replace("A_", "B_");
+        else if (strstr(cmd, "B_")) finalCmd.replace("B_", "A_");
+    }
+
+    if (WiFi.status() != WL_CONNECTED || !appReady) {
+        LOG_ERR("System NOT READY (WiFi or App disconnected)");
+        startFeedback(2, true, true, false); // Berkedip pada LED A dan B bersamaan (Type 2 = Long Error)
+        triggerBuzzerAsync(400, 1);
         return;
     }
+
+    if (feedA) digitalWrite(PIN_LED_A, HIGH);
+    if (feedB) digitalWrite(PIN_LED_B, HIGH);
     
-    // Build URL
-    String url = "http://";
-    url += ANDROID_IP;
-    url += ":";
-    url += String(ANDROID_PORT);
-    url += "/cmd?c=";
-    url += cmd;
-    
-    Serial.print(F("Sending: "));
-    Serial.println(url);
-    
-    // LED feedback
-    digitalWrite(PIN_LED, HIGH); // LED off during send
+    String url = "http://" + cfgManager.config.android_ip + ":" + String(cfgManager.config.android_port) + "/cmd?c=" + finalCmd;
+    LOG_VAL("Sending", url);
     
     bool success = false;
     for (int attempt = 1; attempt <= HTTP_RETRIES; attempt++) {
         HTTPClient http;
         http.begin(wifiClient, url);
         http.setTimeout(HTTP_TIMEOUT_MS);
-        
         int httpCode = http.GET();
-        
         if (httpCode == 200) {
-            String response = http.getString();
-            Serial.print(F("OK ("));
-            Serial.print(attempt);
-            Serial.print(F("): "));
-            Serial.println(response);
             success = true;
             http.end();
             break;
-        } else {
-            Serial.print(F("Attempt "));
-            Serial.print(attempt);
-            Serial.print(F(" failed: "));
-            Serial.println(httpCode);
-            http.end();
-            
-            if (attempt < HTTP_RETRIES) {
-                delay(100); // Brief delay before retry
-            }
         }
+        http.end();
+        if (attempt < HTTP_RETRIES) delay(100);
     }
     
-    if (success) {
-        // Quick blink + double beep = success
-        blinkSuccess();
-        triggerBuzzer(50, 2);
-    } else {
-        // Error blink + long beep
-        Serial.println(F("All retries failed!"));
-        blinkError();
-        triggerBuzzer(500);
+    if (success) startFeedback(0, feedA, feedB, true);
+    else {
+        LOG_ERR("Command failed!");
+        startFeedback(1, feedA, feedB, true);
+        triggerBuzzerAsync(500);
     }
-    
     lastSendTime = millis();
 }
 
 // ============================================================
-//  LED FEEDBACK
+//  FEEDBACK
 // ============================================================
 
-void blinkSuccess() {
-    // Single quick flash
-    digitalWrite(PIN_LED, LOW);   // ON
-    delay(50);
-    digitalWrite(PIN_LED, HIGH);  // OFF
-    delay(50);
-    digitalWrite(PIN_LED, LOW);   // ON (stays on = connected)
+void startFeedback(int type, bool a, bool b, bool ready) {
+    feedback.active = true;
+    feedback.type = type;
+    feedback.ledA = a;
+    feedback.ledB = b;
+    feedback.readyLed = ready;
+    feedback.step = 0;
+    feedback.startTime = millis();
+    isBlinking = true;
+    if (type == 0) triggerBuzzerAsync(40, 3);
 }
 
-void blinkError() {
-    // Triple fast blink
-    for (int i = 0; i < 3; i++) {
-        digitalWrite(PIN_LED, LOW);
-        delay(80);
-        digitalWrite(PIN_LED, HIGH);
-        delay(80);
+void updateFeedback() {
+    if (!feedback.active) return;
+
+    unsigned long now = millis();
+    int interval = (feedback.type == 0) ? 60 : 200;
+    int maxSteps = (feedback.type == 2) ? 12 : 6; // Type 2 (Long Error) blinks twice as long
+
+    if (now - feedback.startTime >= (unsigned long)interval) {
+        feedback.startTime = now;
+        feedback.step++;
+
+        if (feedback.step >= maxSteps) {
+            feedback.active = false;
+            isBlinking = false;
+            // Ensure LEDs are state-correct after blink
+            if (feedback.ledA) digitalWrite(PIN_LED_A, LOW);
+            if (feedback.ledB) digitalWrite(PIN_LED_B, LOW);
+            return;
+        }
+
+        bool ledOn = (feedback.step % 2 == 0);
+        if (feedback.ledA) digitalWrite(PIN_LED_A, ledOn);
+        if (feedback.ledB) digitalWrite(PIN_LED_B, ledOn);
+        if (feedback.readyLed) digitalWrite(PIN_LED_READY, ledOn);
     }
-    // Return to connection state
-    if (WiFi.status() == WL_CONNECTED) {
-        digitalWrite(PIN_LED, LOW); // ON
-    } else {
-        digitalWrite(PIN_LED, HIGH); // OFF
+}
+
+void playReadyMelody() {
+    // Keeping this simple for now, but async melody would need a sequence
+    triggerBuzzerAsync(100, 2); 
+}
+
+void updateReadyLED() {
+    if (WiFi.status() != WL_CONNECTED || !appReady) currentLEDState = LED_FAST;
+    else currentLEDState = LED_1_8;
+
+    if (isBlinking) return; // Let feedback handle Ready LED if active
+
+    unsigned long now = millis();
+    static unsigned long lastToggle = 0;
+    switch (currentLEDState) {
+        case LED_1_8:
+            {
+                bool currentState = digitalRead(PIN_LED_READY);
+                unsigned long interval = currentState ? BLINK_1_8_ON_MS : BLINK_1_8_OFF_MS;
+                if (now - lastToggle >= interval) {
+                    lastToggle = now;
+                    digitalWrite(PIN_LED_READY, !currentState);
+                }
+            }
+            break;
+        case LED_FAST:
+            if (now - lastToggle >= BLINK_FAST_MS) {
+                lastToggle = now;
+                digitalWrite(PIN_LED_READY, !digitalRead(PIN_LED_READY));
+            }
+            break;
     }
+}
+
+// ============================================================
+//  SETUP MODE
+// ============================================================
+
+void startSetupMode() {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP("Padle-Score-Setup");
+    LOG_VAL("AP IP", WiFi.softAPIP().toString());
+    dnsServer.start(53, "*", WiFi.softAPIP());
+    server.on("/", HTTP_GET, handleRoot);
+    server.on("/save", HTTP_POST, handleSave);
+    server.onNotFound(handleNotFound);
+    server.begin();
+    LOG("Captive Portal Started.");
+}
+
+void handleRoot() {
+    String html = FPSTR(CONFIG_HTML);
+    // Replace placeholders with current values
+    html.replace("id=\"ssd\"", "id=\"ssd\" value=\"" + cfgManager.config.wifi_ssid + "\"");
+    html.replace("id=\"pw\"", "id=\"pw\" value=\"" + cfgManager.config.wifi_pass + "\"");
+    html.replace("id=\"ip\"", "id=\"ip\" value=\"" + cfgManager.config.android_ip + "\"");
+    html.replace("id=\"pt\" value=\"8888\"", "id=\"pt\" value=\"" + String(cfgManager.config.android_port) + "\"");
+    
+    String swapSel = cfgManager.config.swap_sensors ? "selected" : "";
+    html.replace("<option value=\"1\">", "<option value=\"1\" " + swapSel + ">");
+    
+    server.send(200, "text/html", html);
+}
+
+void handleSave() {
+    if (server.hasArg("ssd")) cfgManager.config.wifi_ssid = server.arg("ssd");
+    if (server.hasArg("pw")) cfgManager.config.wifi_pass = server.arg("pw");
+    if (server.hasArg("ip")) cfgManager.config.android_ip = server.arg("ip");
+    if (server.hasArg("pt")) cfgManager.config.android_port = server.arg("pt").toInt();
+    if (server.hasArg("swp")) cfgManager.config.swap_sensors = (server.arg("swp") == "1");
+    cfgManager.saveConfig();
+    server.send(200, "text/html", FPSTR(SAVE_HTML));
+    delay(2000);
+    ESP.restart();
+}
+
+void handleNotFound() {
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "");
 }

@@ -1,0 +1,979 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, touch-action=none">
+    <title>X9 Padle Score Remote</title>
+    <style>
+        :root {
+            --color-a: #2ecc71;
+            --color-active: #27ae60;
+            --accent: #2ecc71;
+            --accent-dim: rgba(46,204,113,0.12);
+            --bg: #000;
+            --surface: #141416;
+            --surface2: #1e1e22;
+            --surface3: #28282e;
+            --border: rgba(255,255,255,0.08);
+            --text: #f0f0f0;
+            --text-muted: #8e8e93;
+            --text-dim: #555;
+            --radius: 14px;
+            --radius-sm: 8px;
+            --shadow: 0 24px 64px rgba(0,0,0,0.7);
+        }
+
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
+            overflow: hidden;
+        }
+
+        /* ── Scoreboard Header ── */
+        .header {
+            display: flex; justify-content: space-around;
+            padding: 10px; font-size: 22px; font-weight: bold;
+            background: rgba(0,0,0,0.5); z-index: 10;
+            font-family: 'Courier New', monospace;
+        }
+        .team-name { padding: 8px 14px; text-align: center; border-radius: 6px; }
+        .team-a { color: #2ecc71; }
+        .team-b { color: #f1c40f; }
+
+        .scores {
+            display: flex; flex: 1; justify-content: space-around;
+            align-items: center; position: relative;
+            font-family: 'Courier New', monospace;
+        }
+        .score-panel {
+            flex: 1; display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            height: 100%; cursor: pointer;
+            transition: background 0.15s;
+        }
+        .score-panel:active { background: rgba(255,255,255,0.05); }
+        .score { font-size: 28vw; font-weight: bold; line-height: 1; }
+        .sets { font-size: 7vw; color: var(--text-muted); margin-top: 4px; }
+
+        /* ── Modal ── */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(10px);
+        }
+        .modal.visible { display: flex; }
+        .modal-content {
+            background: #111;
+            width: 95%;
+            max-width: 500px;
+            height: 85vh;
+            border-radius: 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #333;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+
+        .modal-header-main { 
+            display: flex; 
+            background: #1c1c1e; 
+            border-bottom: 1px solid #333;
+        }
+        .main-tab {
+            flex: 1; text-align: center; padding: 16px;
+            cursor: pointer; font-size: 14px; font-weight: bold;
+            color: #888; border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        .main-tab.active { color: #fff; border-bottom-color: var(--color-a); background: #2c2c2e; }
+
+        /* Sub tabs for admin */
+        .sub-tabs-bar {
+            display: flex; overflow-x: auto; background: #000;
+            border-bottom: 1px solid #222;
+            -ms-overflow-style: none; scrollbar-width: none;
+        }
+        .sub-tabs-bar::-webkit-scrollbar { display: none; }
+        .tab {
+            padding: 12px 18px; cursor: pointer; font-size: 11px;
+            font-weight: bold; color: #666; white-space: nowrap;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .tab.active { color: var(--color-a); background: #111; }
+
+        .tab-content { 
+            display: none; flex: 1; padding: 10px 16px; 
+            overflow-y: auto; background: #111; 
+            scrollbar-width: thin; scrollbar-color: #333 #111;
+        }
+        .tab-content.active { display: block; }
+        
+        .section-hdr {
+            font-size: 12px; color: var(--color-a); font-weight: bold;
+            text-transform: uppercase; margin: 20px 0 10px 4px;
+            letter-spacing: 1px;
+        }
+
+        .control-row {
+            display: flex; align-items: center; background: #1c1c1e;
+            padding: 12px 16px; margin-bottom: 2px; border-radius: 12px;
+            min-height: 56px;
+        }
+        .control-row label { flex: 1; font-size: 15px; color: #fff; }
+        .control-row select, .control-row input[type=text], .control-row input[type=number] {
+            max-width: 45%; background: #2c2c2e; color: #fff;
+            border: none; border-radius: 8px; padding: 8px 12px; font-size: 14px;
+        }
+        .control-row input[type=checkbox] { width: 24px; height: 24px; accent-color: var(--color-a); }
+
+        .upload-btn {
+            background: #1c1c1e; padding: 14px; border-radius: 12px;
+            text-align: center; color: var(--color-a); font-weight: bold;
+            display: block; margin-top: 10px; cursor: pointer;
+        }
+
+        /* ── PIN Center ── */
+        .pin-container {
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; height: 100%; text-align: center;
+            padding: 20px;
+        }
+        .pin-container input {
+            background: #1c1c1e; border: 1px solid #333; color: #fff;
+            padding: 16px; font-size: 28px; text-align: center;
+            border-radius: 12px; width: 100%; max-width: 240px;
+            letter-spacing: 12px; margin-bottom: 24px; outline: none;
+        }
+        .pin-container button {
+            background: var(--color-a); color: #000; border: none;
+            padding: 14px 40px; border-radius: 12px; font-weight: bold;
+            font-size: 16px; cursor: pointer;
+        }
+
+        .done-btn {
+            background: var(--color-a); color: #000; border: none;
+            padding: 18px; width: 100%; font-weight: bold;
+            font-size: 16px; text-transform: uppercase; cursor: pointer;
+        }
+        .version-footer { text-align: center; font-size: 11px; color: #444; padding: 10px; background: #000; }
+        
+        .assign-btn {
+            background: var(--color-acc);
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            transition: all 0.2s;
+        }
+        .assign-btn:active { transform: scale(0.9); background: #00cc55; }
+
+        .conn-banner {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            background: #e74c3c;
+            color: #fff;
+            text-align: center;
+            padding: 12px;
+            font-size: 14px;
+            font-weight: bold;
+            z-index: 1999;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        .conn-banner.visible { display: block; }
+
+        .learning-pulse {
+            animation: learning-pulse 1.5s infinite;
+            font-weight: bold;
+            color: #ff9900 !important;
+        }
+        @keyframes learning-pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        .toggle-ctrl {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(30,30,34,0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,255,255,0.05);
+            color: #888;
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 500;
+            z-index: 100;
+            display: flex; align-items: center; gap: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .toggle-ctrl:active { transform: scale(0.9); background: var(--surface3); color: #fff; }
+
+        /* ── History Styles ────────────────────────── */
+    </style>
+</head>
+<body>
+
+    <!-- Connection indicator -->
+    <div class="conn-dot" id="connDot"></div>
+    <div class="conn-banner" id="connBanner">⚠️ Koneksi Terputus — Mencoba menghubungkan kembali...</div>
+
+    <!-- Settings Trigger -->
+    <button class="toggle-ctrl" onclick="toggleModal()">⚙️ Setelan</button>
+
+    <!-- Scoreboard -->
+    <div class="header">
+        <div id="nameA" class="team-name team-a">TEAM A</div>
+        <div id="nameB" class="team-name team-b">TEAM B</div>
+    </div>
+    <div class="scores" id="scoresArea">
+        <div class="score-panel" id="panelA">
+            <div class="score team-a" id="scoreA">0</div>
+            <div class="sets">GAMES: <span id="gamesA">0</span></div>
+            <div class="sets">SETS: <span id="setsA">0</span></div>
+        </div>
+        <div class="score-panel" id="panelB">
+            <div class="score team-b" id="scoreB">0</div>
+            <div class="sets">GAMES: <span id="gamesB">0</span></div>
+            <div class="sets">SETS: <span id="setsB">0</span></div>
+        </div>
+    </div>
+    <div class="status-bar" id="status"></div>
+
+    <!-- SETTINGS MODAL -->
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <!-- Drag pill (visible on mobile only) -->
+            <div class="modal-drag-pill"></div>
+
+            <!-- Main Tabs (PENGGUNA vs ADMIN) -->
+            <div class="modal-header-main">
+                <div class="main-tab active" id="mainTabUser" onclick="switchMainTab('user')">👤 PENGGUNA</div>
+                <div class="main-tab" id="mainTabAdmin" onclick="switchMainTab('admin')">🔒 ADMIN</div>
+            </div>
+
+            <div id="mainContainer" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                <!-- USER VIEW -->
+                <div id="viewUser" class="tab-content active">
+                    <div class="section-hdr">🎾 Mode Permainan</div>
+                    <div class="control-row">
+                        <label>Preset Scoring<span class="ctrl-sub">Pilih gaya permainan</span></label>
+                        <select id="userPresetSelect" onchange="syncPreset(this.value)">
+                            <option value="standard">Standard Padel</option>
+                            <option value="golden_point">Golden Point</option>
+                            <option value="fast_short">Fast / Short</option>
+                            <option value="custom_1">Custom 1</option>
+                            <option value="custom_2">Custom 2</option>
+                            <option value="custom_3">Custom 3</option>
+                        </select>
+                    </div>
+
+                    <div class="section-hdr">🔊 Audio & Tampilan</div>
+                    <div class="settings-grid">
+                        <div class="control-row">
+                            <label>Aktifkan Suara<span class="ctrl-sub">Efek skor & umpire</span></label>
+                            <input type="checkbox" id="userSoundToggle" onchange="updateConfig()">
+                        </div>
+                        <div class="control-row">
+                            <label>Foto Pemain<span class="ctrl-sub">Tampilkan di papan</span></label>
+                            <input type="checkbox" id="userPhotosToggle" onchange="updateConfig()">
+                        </div>
+                    </div>
+                    
+                    <!-- User Photo Upload Buttons (shown only if permitted) -->
+                    <div id="userPhotoUploadArea" style="display:none;">
+                        <div class="section-hdr">📸 Ganti Foto Tim</div>
+                        <label class="upload-btn" for="userPhotoA">📁 Upload Foto Tim A</label>
+                        <input type="file" id="userPhotoA" accept="image/*" style="display:none" onchange="uploadPhoto('A', this)">
+                        <label class="upload-btn" for="userPhotoB" style="margin-top:6px;">📁 Upload Foto Tim B</label>
+                        <input type="file" id="userPhotoB" accept="image/*" style="display:none" onchange="uploadPhoto('B', this)">
+                    </div>
+
+                    <div style="color:var(--text-dim); font-size:12px; padding:16px 4px 4px; line-height:1.6;">
+                        💡 Gunakan tab <strong style="color:var(--text-muted)">ADMIN</strong> untuk konfigurasi aturan mendalam.
+                    </div>
+                </div>
+
+                <!-- ADMIN VIEW -->
+                <div id="viewAdmin" class="tab-content" style="padding:0; display:none; flex-direction:column; height: 100%;">
+                    <!-- PIN Lock View -->
+                    <div id="pinLockView" class="pin-container">
+                        <div class="pin-lock-icon">🔒</div>
+                        <div class="pin-title">Admin Access</div>
+                        <div class="pin-sub">Masukkan PIN untuk membuka panel admin</div>
+                        <input type="password" id="pinInput" placeholder="••••" maxlength="8" inputmode="numeric"
+                               onkeydown="if(event.key==='Enter') tryAdmin()">
+                        <button onclick="tryAdmin()">🔓 Buka Akses</button>
+                    </div>
+
+                    <!-- Admin Panel View -->
+                    <div id="adminPanelView" style="display:none; flex-direction:column; height: 100%; overflow: hidden;">
+                        <!-- Sub tabs layout (Teams, Rules, etc) -->
+                        <div class="sub-tabs-bar">
+                            <div class="tab active" onclick="switchSubTab('teams')">Teams</div>
+                            <div class="tab" onclick="switchSubTab('rules')">Rules</div>
+                            <div class="tab" onclick="switchSubTab('visuals')">Visuals</div>
+                            <div class="tab" onclick="switchSubTab('photos')">Photos</div>
+                            <div class="tab" onclick="switchSubTab('audio')">Audio</div>
+                            <div class="tab" onclick="switchSubTab('remote')">Remote</div>
+                            <div class="tab" onclick="switchSubTab('system')">System</div>
+                        </div>
+
+                        <div id="subTabContainer" style="flex: 1; overflow-y: auto;">
+                            <!-- TEAMS TAB -->
+                            <div id="tab-teams" class="tab-content active">
+                                <div class="section-hdr">🏷️ Nama Tim</div>
+                                <div class="control-row"><label>Tim A<span class="ctrl-sub">Nama untuk Team A</span></label><input type="text" id="teamAInput" onchange="updateConfig()" placeholder="TEAM A"></div>
+                                <div class="control-row"><label>Tim B<span class="ctrl-sub">Nama untuk Team B</span></label><input type="text" id="teamBInput" onchange="updateConfig()" placeholder="TEAM B"></div>
+                            </div>
+
+                            <!-- RULES TAB -->
+                            <div id="tab-rules" class="tab-content">
+                                <div class="section-hdr">🎯 Scoring Preset</div>
+                                <div class="control-row full-row"><label>Preset<span class="ctrl-sub">Mode aturan dasar</span></label>
+                                    <select id="scoringPreset" onchange="updateConfig()"><option value="standard">Standard</option><option value="golden_point">Golden Point</option><option value="fast_short">Fast / Short</option><option value="custom_1">Custom 1</option><option value="custom_2">Custom 2</option><option value="custom_3">Custom 3</option></select>
+                                </div>
+                                <div class="section-hdr">⚙️ Rules</div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Golden Point<span class="ctrl-sub">Deuce → 1 poin</span></label><input type="checkbox" id="useGoldenPoint" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Games to Win Set<span class="ctrl-sub">Jumlah games</span></label><input type="number" id="gamesToWinSet" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Must Win By 2<span class="ctrl-sub">Wajib unggul 2</span></label><input type="checkbox" id="winBy2Games" onchange="updateConfig()"></div>
+                                </div>
+                                <div class="section-hdr">🔀 Tie Break</div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Gunakan TB</label><input type="checkbox" id="useTieBreak" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>TB Di Game<span class="ctrl-sub">Trigger pada game ke-</span></label><input type="number" id="tieBreakAt" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>TB Target<span class="ctrl-sub">Poin untuk menang</span></label><input type="number" id="tieBreakTarget" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Win By 2</label><input type="checkbox" id="tieBreakWinBy2" onchange="updateConfig()"></div>
+                                </div>
+                                <div class="section-hdr">🏆 Set Rule</div>
+                                <div class="control-row"><label>Best Of Sets</label>
+                                    <select id="setsToWinMatch" onchange="updateConfig()"><option value="1">1 Set</option><option value="2">3 Sets</option><option value="3">5 Sets</option></select>
+                                </div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Final Super TB</label><input type="checkbox" id="finalSetSuperTieBreak" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Super TB Target<span class="ctrl-sub">Poin menang</span></label><input type="number" id="superTieBreakTarget" onchange="updateConfig()"></div>
+                                </div>
+                            </div>
+
+                            <!-- VISUALS TAB -->
+                            <div id="tab-visuals" class="tab-content">
+                                <div class="section-hdr">🎨 Warna Tim</div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Warna Tim A</label><input type="color" id="colorA" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Warna Tim B</label><input type="color" id="colorB" onchange="updateConfig()"></div>
+                                </div>
+                                <div class="section-hdr">🔤 Teks</div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Ukuran Font<span class="ctrl-sub">Scale factor</span></label><select id="fontScale" onchange="updateConfig()"><option value="0.8">Kecil</option><option value="1.0">Normal</option><option value="1.2">Besar</option><option value="1.5">Extra</option></select></div>
+                                    <div class="control-row"><label>Jenis Font</label><select id="fontTypeface" onchange="updateConfig()"><option value="monospace">Monospace</option><option value="sans-serif">Sans</option><option value="serif">Serif</option></select></div>
+                                    <div class="control-row"><label>Efek Menang<span class="ctrl-sub">Animasi saat skor</span></label><input type="checkbox" id="enableWinEffect" onchange="updateConfig()"></div>
+                                </div>
+                            </div>
+
+                            <!-- PHOTOS TAB -->
+                            <div id="tab-photos" class="tab-content">
+                                <div class="section-hdr">Display</div>
+                                <div class="control-row"><label>Enable Photos</label><input type="checkbox" id="enablePhotos" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>Allow User Upload Photos</label><input type="checkbox" id="allowUserUploadPhoto" onchange="updateConfig()"></div>
+                                <div class="section-hdr">Manage</div>
+                                <label class="upload-btn" for="photoA">📸 Upload Team A</label><input type="file" id="photoA" accept="image/*" style="display:none" onchange="uploadPhoto('A', this)">
+                                <label class="upload-btn" for="photoB">📸 Upload Team B</label><input type="file" id="photoB" accept="image/*" style="display:none" onchange="uploadPhoto('B', this)">
+                                <div class="section-hdr">Position & Size</div>
+                                <div class="control-row"><label>Size %</label><input type="range" id="photoSize" min="10" max="60" oninput="updateConfig()"></div>
+                                <div class="control-row"><label>Y Pos %</label><input type="range" id="photoYPos" min="0" max="100" oninput="updateConfig()"></div>
+                                <div class="control-row"><label>X Team A</label><input type="range" id="photoXPosA" min="-30" max="30" oninput="updateConfig()"></div>
+                                <div class="control-row"><label>X Team B</label><input type="range" id="photoXPosB" min="-30" max="30" oninput="updateConfig()"></div>
+                            </div>
+
+                            <!-- AUDIO TAB -->
+                            <div id="tab-audio" class="tab-content">
+                                <div class="section-hdr">🔊 Suara</div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Sound Effects<span class="ctrl-sub">Efek skor poin</span></label><input type="checkbox" id="soundEnabled" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Voice Umpire<span class="ctrl-sub">Suara wasit digital</span></label><input type="checkbox" id="voiceRef" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Say 'Love'<span class="ctrl-sub">0 diucap 'Love'</span></label><input type="checkbox" id="useLoveForZero" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>Efek Tepuk Tangan<span class="ctrl-sub">Saat game/set selesai</span></label><input type="checkbox" id="enableApplause" onchange="updateConfig()"></div>
+                                </div>
+                            </div>
+
+                            <!-- REMOTE TAB -->
+                            <div id="tab-remote" class="tab-content">
+                                <div class="control-row"><label>HTTP Remote</label><input type="checkbox" id="enableHttpServer" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>BLE HID</label><input type="checkbox" id="enableBleHid" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>AB Shutter</label><input type="checkbox" id="enableShutterRemote" onchange="updateConfig()"></div>
+                                
+                                <div class="section-hdr">Bluetooth Mode (V2.3)</div>
+                                <div class="control-row"><label>Mode Operasi</label>
+                                    <select id="remoteMode" onchange="updateConfig()">
+                                        <option value="1">Mode 1: 1 Remote (Klik 1x/2x)</option>
+                                        <option value="2">Mode 2: 2 Remote (Tim A & B)</option>
+                                    </select>
+                                </div>
+                                <div class="control-row"><label>Swap Tim A/B (Mod 2)</label><input type="checkbox" id="remoteSwapMod2" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>Reset Dual-Button</label><input type="checkbox" id="remoteResetEnabled" onchange="updateConfig()"></div>
+                                
+                                <div class="section-hdr">Durasi (ms)</div>
+                                <div class="control-row"><label>Undo (Long Press)</label><input type="number" id="remoteLongPressMs" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>Reset (Dual Press)</label><input type="number" id="remoteDualPressMs" onchange="updateConfig()"></div>
+                                
+                                <div class="section-hdr">Remote Terhubung</div>
+                                <div class="control-row">
+                                    <label>Remote A</label>
+                                    <div style="flex:1; display:flex; align-items:center; gap:8px;">
+                                        <div id="remoteADesc" style="font-size:12px;color:var(--color-a);flex:1">-</div>
+                                        <button id="btnAssignA" class="assign-btn" onclick="assignRemote('A')" style="display:none">ASSIGN A</button>
+                                    </div>
+                                </div>
+                                <div class="control-row">
+                                    <label>Remote B</label>
+                                    <div style="flex:1; display:flex; align-items:center; gap:8px;">
+                                        <div id="remoteBDesc" style="font-size:12px;color:var(--color-b);flex:1">-</div>
+                                        <button id="btnAssignB" class="assign-btn" onclick="assignRemote('B')" style="display:none">ASSIGN B</button>
+                                    </div>
+                                </div>
+
+                                <div class="section-hdr">Legacy Keys</div>
+                                <div class="control-row"><label>A+</label><input type="text" id="keyTeamAPlus" maxlength="1" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>A-</label><input type="text" id="keyTeamAMinus" maxlength="1" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>B+</label><input type="text" id="keyTeamBPlus" maxlength="1" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>B-</label><input type="text" id="keyTeamBMinus" maxlength="1" onchange="updateConfig()"></div>
+                                <div class="control-row"><label>Reset</label><input type="text" id="keyReset" maxlength="1" onchange="updateConfig()"></div>
+                            </div>
+
+                            <!-- SYSTEM TAB -->
+                            <div id="tab-system" class="tab-content">
+                                <div class="section-hdr">🖥️ Server</div>
+                                <div class="settings-grid">
+                                    <div class="control-row"><label>Server Port<span class="ctrl-sub">Default: 8888</span></label><input type="number" id="serverPort" onchange="updateConfig()"></div>
+                                    <div class="control-row"><label>PIN Baru<span class="ctrl-sub">Kosongkan jika tidak ganti</span></label><input type="text" id="newPin" onchange="updateConfig()" placeholder="••••"></div>
+                                    <div class="control-row full-row"><label>Debug Msg Remote<span class="ctrl-sub">Toast saat ada perintah</span></label><input type="checkbox" id="showDebugMsg" onchange="updateConfig()"></div>
+                                </div>
+                                <div class="section-hdr">🎨 Advanced Theme JSON</div>
+                                <textarea id="customThemeJson" onchange="updateConfig()" placeholder='{"colorA":"#2ecc71","colorB":"#f1c40f"}'></textarea>
+                                <div class="section-hdr" style="margin-top:24px;">📋 Riwayat <button class="clear-hist-btn" onclick="clearHistory()">Hapus</button></div>
+                                <div id="historyList"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="done-btn" onclick="toggleModal()">✅ Selesai</button>
+            <div class="version-footer"><span style="color:#FFD700;font-weight:bold;">X9</span> Padle Score v{{APP_VERSION}}</div>
+        </div>
+    </div>
+
+    </div>
+
+    <script>
+        // ── State ────────────────────────────────────────────────────────────
+        let pointers = 0;
+        let touchTimer = null;
+        let isLongPress = false;
+        const LONG_PRESS_MS = 700;
+        let lastTapTime = 0;
+        const TAP_DEBOUNCE_MS = 280;
+        let failCount = 0;
+        const MAX_FAIL = 3;
+        let isDragging = false;
+
+        // ── API Calls ─────────────────────────────────────────────────────────
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/status', {
+                    headers: { 'Cache-Control': 'no-cache' }
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                if (data && data.ok && data.state) {
+                    updateUI(data.state);
+                    if (typeof updateHistoryList === 'function') updateHistoryList(data.state.history);
+                    setConnected(true);
+                } else {
+                    console.error('Malformed state response', data);
+                    setConnected(false);
+                }
+            } catch (e) {
+                console.warn('Status poll failed', e);
+                setConnected(false);
+            }
+        }
+
+        async function sendCommand(cmd) {
+            try {
+                const res = await fetch('/cmd?c=' + cmd);
+                const data = await res.json();
+                if (data.ok) { 
+                    updateUI(data.state); 
+                    updateHistoryList(data.state.history);
+                    setConnected(true); 
+                }
+            } catch (e) { setConnected(false); }
+        }
+
+        async function clearHistory() {
+            if (!confirm('Hapus semua riwayat?')) return;
+            try {
+                await fetch('/clear_history');
+                setTimeout(fetchStatus, 200);
+            } catch(e) { console.error('Clear history failed', e); }
+        }
+
+        function updateHistoryList(history) {
+            const list = document.getElementById('historyList');
+            if (!list) return;
+            if (!history || history.length === 0) {
+                list.innerHTML = '<div style="text-align:center;color:#444;padding:10px;">Belum ada riwayat.</div>';
+                return;
+            }
+            
+            list.innerHTML = '';
+            history.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'history-item';
+                div.innerHTML = `
+                    <div class="hist-date">${item.date}</div>
+                    <div class="hist-teams">
+                        <span style="color:var(--color-a)">${item.teamA}</span>
+                        <span>vs</span>
+                        <span style="color:var(--color-b)">${item.teamB}</span>
+                    </div>
+                    <div class="hist-score">Final Sets: ${item.setsA} - ${item.setsB} (Games: ${item.gamesA}-${item.gamesB})</div>
+                `;
+                list.appendChild(div);
+            });
+        }
+
+        async function updateConfig() {
+            // Collect all settings
+            const p = new URLSearchParams();
+            
+            // Teams
+            p.append('teamA', document.getElementById('teamAInput').value);
+            p.append('teamB', document.getElementById('teamBInput').value);
+            
+            // Rules
+            p.append('scoringPreset', document.getElementById('scoringPreset').value);
+            p.append('useGoldenPoint', document.getElementById('useGoldenPoint').checked);
+            p.append('gamesToWinSet', document.getElementById('gamesToWinSet').value);
+            p.append('winBy2Games', document.getElementById('winBy2Games').checked);
+            p.append('useTieBreak', document.getElementById('useTieBreak').checked);
+            p.append('tieBreakAt', document.getElementById('tieBreakAt').value);
+            p.append('tieBreakTarget', document.getElementById('tieBreakTarget').value);
+            p.append('tieBreakWinBy2', document.getElementById('tieBreakWinBy2').checked);
+            p.append('setsToWinMatch', document.getElementById('setsToWinMatch').value);
+            p.append('finalSetSuperTieBreak', document.getElementById('finalSetSuperTieBreak').checked);
+            p.append('superTieBreakTarget', document.getElementById('superTieBreakTarget').value);
+            
+            // Visuals
+            p.append('colorA', document.getElementById('colorA').value);
+            p.append('colorB', document.getElementById('colorB').value);
+            p.append('fontScale', document.getElementById('fontScale').value);
+            p.append('fontTypeface', document.getElementById('fontTypeface').value);
+            p.append('enableWinEffect', document.getElementById('enableWinEffect').checked);
+            
+            // Photos
+            p.append('enablePhotos', document.getElementById('enablePhotos').checked);
+            p.append('allowUserUploadPhoto', document.getElementById('allowUserUploadPhoto').checked);
+            p.append('photoSize', document.getElementById('photoSize').value);
+            p.append('photoYPos', document.getElementById('photoYPos').value);
+            p.append('photoXPosA', document.getElementById('photoXPosA').value);
+            p.append('photoXPosB', document.getElementById('photoXPosB').value);
+            
+            // Audio
+            p.append('soundEnabled', document.getElementById('soundEnabled').checked);
+            p.append('voiceRef', document.getElementById('voiceRef').checked);
+            p.append('useLoveForZero', document.getElementById('useLoveForZero').checked);
+            p.append('enableApplause', document.getElementById('enableApplause').checked);
+            
+            // Remote Extended (V2.3)
+            p.append('remoteMode', document.getElementById('remoteMode').value);
+            p.append('remoteSwapMod2', document.getElementById('remoteSwapMod2').checked);
+            p.append('remoteResetEnabled', document.getElementById('remoteResetEnabled').checked);
+            p.append('remoteLongPressMs', document.getElementById('remoteLongPressMs').value);
+            p.append('remoteDualPressMs', document.getElementById('remoteDualPressMs').value);
+            
+            // Remote Keys
+            p.append('enableHttpServer', document.getElementById('enableHttpServer').checked);
+            p.append('enableBleHid', document.getElementById('enableBleHid').checked);
+            p.append('enableShutterRemote', document.getElementById('enableShutterRemote').checked);
+            p.append('keyTeamAPlus', document.getElementById('keyTeamAPlus').value);
+            p.append('keyTeamAMinus', document.getElementById('keyTeamAMinus').value);
+            p.append('keyTeamBPlus', document.getElementById('keyTeamBPlus').value);
+            p.append('keyTeamBMinus', document.getElementById('keyTeamBMinus').value);
+            p.append('keyReset', document.getElementById('keyReset').value);
+            
+            // System
+            p.append('serverPort', document.getElementById('serverPort').value);
+            p.append('showDebugMsg', document.getElementById('showDebugMsg').checked);
+            p.append('customThemeJson', document.getElementById('customThemeJson').value);
+            
+            const newPin = document.getElementById('newPin').value;
+            if (newPin && newPin.trim() !== '') {
+                p.append('newPin', newPin);
+            }
+
+            try {
+                await fetch('/config?' + p.toString());
+            } catch(e) {}
+        }
+
+        async function updateTeamName(team, newName) {
+            try {
+                const res = await fetch('/config?' + team + '=' + encodeURIComponent(newName));
+                const data = await res.json();
+                if (data.ok) updateUI(data.state);
+            } catch(e) {}
+        }
+
+
+        async function uploadPhoto(team, input) {
+            if (!input.files || input.files.length === 0) return;
+            const formData = new FormData();
+            formData.append('file', input.files[0]);
+            try {
+                const res = await fetch('/upload?team=' + team, { method: 'POST', body: formData });
+                const data = await res.json();
+                if (data.ok) alert('✅ Foto Tim ' + team + ' berhasil diunggah!');
+            } catch(e) { alert('❌ Gagal mengunggah foto'); }
+        }
+
+        let assignPollInterval = null;
+        async function assignRemote(team) {
+            const btn = document.getElementById('btnAssign' + team);
+            const statusText = document.getElementById('remote' + team + 'Desc');
+            
+            // UI Feedback
+            const oldText = btn.innerText;
+            const oldStatus = statusText.innerText;
+            btn.innerText = 'LEARNING...';
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            statusText.innerText = 'Press any button on Remote ' + team + ' now...';
+            statusText.classList.add('learning-pulse'); // We should add this class in CSS or just style it
+
+            try {
+                const res = await fetch('/assign_remote?team=' + team);
+                const data = await res.json();
+                
+                if (data.ok) {
+                    // Start polling status
+                    if (assignPollInterval) clearInterval(assignPollInterval);
+                    
+                    let attempts = 0;
+                    assignPollInterval = setInterval(async () => {
+                        attempts++;
+                        const sRes = await fetch('/assign_status');
+                        const sData = await sRes.json();
+                        
+                        if (sData.success === team) {
+                            // SUCCESS!
+                            clearInterval(assignPollInterval);
+                            btn.innerText = '✅ LINKED!';
+                            btn.style.background = '#00ff66';
+                            btn.style.color = '#000';
+                            statusText.innerText = 'Linked: ' + sData['remote' + team + 'Desc'];
+                            statusText.classList.remove('learning-pulse');
+                            
+                            setTimeout(() => {
+                                btn.innerText = oldText;
+                                btn.disabled = false;
+                                btn.style.opacity = '1';
+                                btn.style.background = '';
+                                btn.style.color = '';
+                            }, 3000);
+                        } else if (!sData.learning || attempts > 20) {
+                            // Timeout or cancelled on server
+                            clearInterval(assignPollInterval);
+                            btn.innerText = oldText;
+                            btn.disabled = false;
+                            btn.style.opacity = '1';
+                            statusText.innerText = oldStatus;
+                            statusText.classList.remove('learning-pulse');
+                        }
+                    }, 1000);
+                }
+            } catch(e) { 
+                btn.innerText = oldText;
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                statusText.innerText = oldStatus;
+            }
+        }
+
+        function clearHistory() {
+            if (confirm('Hapus riwayat pertandingan?')) {
+                fetch('/history?clear=1').then(fetchStatus);
+            }
+        }
+
+        // ── UI Update ─────────────────────────────────────────────────────────
+        function updateUI(state) {
+            document.getElementById('scoreA').innerText = state.scoreA;
+            document.getElementById('scoreB').innerText = state.scoreB;
+            document.getElementById('gamesA').innerText = state.gamesA || 0;
+            document.getElementById('gamesB').innerText = state.gamesB || 0;
+            document.getElementById('setsA').innerText  = state.setsA;
+            document.getElementById('setsB').innerText  = state.setsB;
+            document.getElementById('status').innerText = state.status || '';
+            document.getElementById('nameA').innerText  = state.teamA;
+            document.getElementById('nameB').innerText  = state.teamB;
+
+            if (!isDragging) {
+                // Teams
+                if(document.activeElement.id !== 'teamAInput') document.getElementById('teamAInput').value = state.teamA || '';
+                if(document.activeElement.id !== 'teamBInput') document.getElementById('teamBInput').value = state.teamB || '';
+                
+                // Rules
+                const preset = state.scoringPreset || 'standard';
+                document.getElementById('scoringPreset').value = preset;
+                document.getElementById('userPresetSelect').value = preset;
+                document.getElementById('useGoldenPoint').checked = !!state.useGoldenPoint;
+                if(document.activeElement.id !== 'gamesToWinSet') document.getElementById('gamesToWinSet').value = state.gamesToWinSet || 6;
+                document.getElementById('winBy2Games').checked = !!state.winBy2Games;
+                document.getElementById('useTieBreak').checked = !!state.useTieBreak;
+                if(document.activeElement.id !== 'tieBreakAt') document.getElementById('tieBreakAt').value = state.tieBreakAt || 6;
+                if(document.activeElement.id !== 'tieBreakTarget') document.getElementById('tieBreakTarget').value = state.tieBreakTarget || 7;
+                document.getElementById('tieBreakWinBy2').checked = !!state.tieBreakWinBy2;
+                document.getElementById('setsToWinMatch').value = state.setsToWinMatch || 2;
+                document.getElementById('finalSetSuperTieBreak').checked = !!state.finalSetSuperTieBreak;
+                if(document.activeElement.id !== 'superTieBreakTarget') document.getElementById('superTieBreakTarget').value = state.superTieBreakTarget || 10;
+                
+                // Visuals
+                if (state.colorA) document.getElementById('colorA').value = state.colorA;
+                if (state.colorB) document.getElementById('colorB').value = state.colorB;
+                let fs = Object.keys(state).includes('fontScale') ? state.fontScale.toFixed(1) : "1.0";
+                if(fs === "1.0" || fs === "0.8" || fs === "1.2" || fs === "1.5") {
+                    document.getElementById('fontScale').value = fs;
+                }
+                document.getElementById('fontTypeface').value = state.fontTypeface || 'monospace';
+                document.getElementById('enableWinEffect').checked = !!state.enableWinEffect;
+                
+                // Photos
+                document.getElementById('enablePhotos').checked = !!state.enablePhotos;
+                document.getElementById('userPhotosToggle').checked = !!state.enablePhotos;
+                document.getElementById('allowUserUploadPhoto').checked = !!state.allowUserUploadPhoto;
+                document.getElementById('userPhotoUploadArea').style.display = state.allowUserUploadPhoto ? 'block' : 'none';
+                
+                document.getElementById('photoSize').value = state.photoSize ?? 25;
+                document.getElementById('photoYPos').value = state.photoYPos ?? 35;
+                document.getElementById('photoXPosA').value = state.photoXPosA ?? 0;
+                document.getElementById('photoXPosB').value = state.photoXPosB ?? 0;
+                
+                // Audio
+                document.getElementById('soundEnabled').checked = !!state.soundEnabled;
+                document.getElementById('userSoundToggle').checked = !!state.soundEnabled;
+                document.getElementById('voiceRef').checked = !!state.voiceRef;
+                document.getElementById('useLoveForZero').checked = !!state.useLoveForZero;
+                document.getElementById('enableApplause').checked = !!state.enableApplause;
+                
+                // Remote
+                document.getElementById('enableHttpServer').checked = !!state.enableHttpServer;
+                document.getElementById('enableBleHid').checked = !!state.enableBleHid;
+                document.getElementById('enableShutterRemote').checked = !!state.enableShutterRemote;
+                
+                document.getElementById('remoteMode').value = state.remoteMode ?? 1;
+                document.getElementById('remoteSwapMod2').checked = !!state.remoteSwapMod2;
+                document.getElementById('remoteResetEnabled').checked = !!state.remoteResetEnabled;
+                
+                const isMode2 = (state.remoteMode == 2);
+                document.getElementById('btnAssignA').style.display = isMode2 ? 'block' : 'none';
+                document.getElementById('btnAssignB').style.display = isMode2 ? 'block' : 'none';
+
+                if(document.activeElement.id !== 'remoteLongPressMs') document.getElementById('remoteLongPressMs').value = state.remoteLongPressMs ?? 600;
+                if(document.activeElement.id !== 'remoteDualPressMs') document.getElementById('remoteDualPressMs').value = state.remoteDualPressMs ?? 2000;
+                
+                document.getElementById('remoteADesc').innerText = state.remoteADesc || '-';
+                document.getElementById('remoteBDesc').innerText = state.remoteBDesc || '-';
+                
+                if(document.activeElement.id !== 'keyTeamAPlus') document.getElementById('keyTeamAPlus').value = state.keyTeamAPlus || 'a';
+                if(document.activeElement.id !== 'keyTeamAMinus') document.getElementById('keyTeamAMinus').value = state.keyTeamAMinus || 's';
+                if(document.activeElement.id !== 'keyTeamBPlus') document.getElementById('keyTeamBPlus').value = state.keyTeamBPlus || 'd';
+                if(document.activeElement.id !== 'keyTeamBMinus') document.getElementById('keyTeamBMinus').value = state.keyTeamBMinus || 'f';
+                if(document.activeElement.id !== 'keyReset') document.getElementById('keyReset').value = state.keyReset || 'r';
+                
+                // System
+                if(document.activeElement.id !== 'serverPort') document.getElementById('serverPort').value = state.serverPort || 8888;
+                document.getElementById('showDebugMsg').checked = !!state.showDebugMsg;
+                if(document.activeElement.id !== 'customThemeJson') document.getElementById('customThemeJson').value = state.customThemeJson || '';
+            }
+        }
+
+        function setConnected(online) {
+            const dot    = document.getElementById('connDot');
+            const banner = document.getElementById('connBanner');
+            if (online) {
+                failCount = 0;
+                dot.classList.remove('offline');
+                banner.classList.remove('visible');
+            } else {
+                failCount++;
+                // Only show offline UI after multiple failures to avoid flickering on minor packet loss
+                if (failCount >= MAX_FAIL) {
+                    dot.classList.add('offline');
+                    banner.classList.add('visible');
+                }
+            }
+        }
+
+        // ── Modal Handlers ──
+        function toggleModal() {
+            const modal = document.getElementById('settingsModal');
+            modal.classList.toggle('visible');
+            if (modal.classList.contains('visible')) {
+                switchMainTab('user');
+            }
+        }
+
+        function switchMainTab(tabId) {
+            const isUser = tabId === 'user';
+            document.getElementById('mainTabUser').classList.toggle('active', isUser);
+            document.getElementById('mainTabAdmin').classList.toggle('active', !isUser);
+            document.getElementById('viewUser').style.display = isUser ? 'block' : 'none';
+            document.getElementById('viewAdmin').style.display = isUser ? 'none' : 'flex';
+            
+            if (!isUser && sessionStorage.getItem('adminUnlocked') === '1') {
+                showAdminControls();
+            } else if (!isUser) {
+                document.getElementById('pinLockView').style.display = 'flex';
+                document.getElementById('adminPanelView').style.display = 'none';
+            }
+        }
+
+        function switchSubTab(tabId) {
+            document.querySelectorAll('.sub-tabs-bar .tab').forEach(t => t.classList.remove('active'));
+            // Find by text matching
+            const tabBtn = Array.from(document.querySelectorAll('.sub-tabs-bar .tab')).find(t => t.innerText.toLowerCase() === tabId);
+            if (tabBtn) tabBtn.classList.add('active');
+
+            document.querySelectorAll('#subTabContainer .tab-content').forEach(c => c.classList.remove('active'));
+            const content = document.getElementById('tab-' + tabId);
+            if (content) content.classList.add('active');
+            
+            document.getElementById('subTabContainer').scrollTop = 0;
+        }
+
+        function showAdminControls() {
+            if (document.getElementById('pinLockView')) document.getElementById('pinLockView').style.display = 'none';
+            if (document.getElementById('adminPanelView')) document.getElementById('adminPanelView').style.display = 'flex';
+        }
+
+        async function tryAdmin() {
+            const input = document.getElementById('pinInput');
+            const p = input.value;
+            if (!p) return;
+            try {
+                const res = await fetch('/config?pin=' + encodeURIComponent(p));
+                const data = await res.json();
+                if (data.ok) {
+                    sessionStorage.setItem('adminUnlocked', '1');
+                    showAdminControls();
+                } else {
+                    input.style.borderColor = '#e74c3c';
+                    setTimeout(() => input.style.borderColor = '#333', 1000);
+                }
+            } catch(e) {}
+        }
+
+        function syncPreset(v) {
+            document.getElementById('scoringPreset').value = v;
+            updateConfig();
+        }
+
+        // ── Touch on team name → rename ───────────────────────────────────────
+        document.getElementById('nameA').onclick = () => {
+            const name = prompt('Nama Tim A:', document.getElementById('nameA').innerText);
+            if (name && name.trim()) updateTeamName('teamA', name.trim());
+        };
+        document.getElementById('nameB').onclick = () => {
+            const name = prompt('Nama Tim B:', document.getElementById('nameB').innerText);
+            if (name && name.trim()) updateTeamName('teamB', name.trim());
+        };
+
+        // ── Drag detection for sliders ────────────────────────────────────────
+        ['photoSize','photoYPos','photoXPosA','photoXPosB'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('touchstart', () => isDragging = true,  {passive:true});
+                el.addEventListener('touchend',   () => { isDragging = false; updateConfig(); }, {passive:true});
+                el.addEventListener('mousedown',  () => isDragging = true);
+                el.addEventListener('mouseup',    () => { isDragging = false; updateConfig(); });
+            }
+        });
+
+        // ── Score Touch Handlers ──────────────────────────────────────────────
+        function setupScoreTouch(panelId, scoreId, cmdPlus, cmdMinus) {
+            [panelId, scoreId].forEach(id => {
+                const el = document.getElementById(id);
+                el.addEventListener('touchstart', (e) => {
+                    pointers = e.touches.length;
+                    if (pointers >= 2) {
+                        clearTimeout(touchTimer);
+                        touchTimer = setTimeout(() => {
+                            isLongPress = true;
+                            if (confirm('Reset permainan?\n\nApakah foto juga ingin dihapus?')) {
+                                sendCommand('RESET_WITH_PHOTOS');
+                            } else {
+                                sendCommand('RESET');
+                            }
+                        }, 1200);
+                        return;
+                    }
+                    e.preventDefault();
+                    isLongPress = false;
+                    clearTimeout(touchTimer);
+                    touchTimer = setTimeout(() => {
+                        isLongPress = true;
+                        sendCommand(cmdMinus); // Long press = undo
+                    }, LONG_PRESS_MS);
+                }, {passive: false});
+
+                el.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    clearTimeout(touchTimer);
+                    if (!isLongPress && pointers < 2) {
+                        const now = Date.now();
+                        if (now - lastTapTime > TAP_DEBOUNCE_MS) {
+                            lastTapTime = now;
+                            sendCommand(cmdPlus);
+                        }
+                    }
+                }, {passive: false});
+            });
+        }
+
+        setupScoreTouch('panelA', 'scoreA', 'A_PLUS', 'A_MINUS');
+        setupScoreTouch('panelB', 'scoreB', 'B_PLUS', 'B_MINUS');
+
+        // ── Poll ──────────────────────────────────────────────────────────────
+        fetchStatus();
+        setInterval(fetchStatus, 1500);
+    </script>
+</body>
+</html>

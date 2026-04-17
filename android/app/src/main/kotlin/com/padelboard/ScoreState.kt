@@ -1,15 +1,35 @@
 package com.padelboard
 
 /**
- * V2.0 - Padel scoring state machine.
+ * V2.1 - Padel scoring state machine.
  * Supports two modes:
  *   - "standard": Traditional 0/15/30/40/Deuce/Advantage Padel scoring.
- *   - "custom": Numeric increment scoring with configurable max points and win-by-two.
- * Thread-safe via synchronized blocks.
+ *   - Tie-break / Super Tie-break modes.
+ *
+ * Key improvements in V2.1:
+ *   - Full undo history stack (up to 15 moves). undo() restores exact state
+ *     including across game/set boundaries — not just point-level estimation.
+ *   - Thread-safe: all public mutation methods are @Synchronized.
  */
-// --- Rewrite of ScoreState.kt ---
-
 class ScoreState(private val config: ConfigManager) {
+
+    // ── State Snapshot for Undo History ────────────────────────────────────
+    private data class StateSnapshot(
+        val pointsA: Int,
+        val pointsB: Int,
+        val gamesA: Int,
+        val gamesB: Int,
+        val setsA: Int,
+        val setsB: Int,
+        val isDeuce: Boolean,
+        val advantageTeam: Char?,
+        val isTieBreak: Boolean,
+        val isSuperTieBreak: Boolean,
+        val lastGameWinner: Char?
+    )
+
+    private val history = ArrayDeque<StateSnapshot>()
+    private val MAX_HISTORY = 15
 
     private val standardLabels = arrayOf("0", "15", "30", "40")
 
@@ -40,6 +60,34 @@ class ScoreState(private val config: ConfigManager) {
         private set
 
     var onScoreChanged: (() -> Unit)? = null
+
+    // ── History Helpers ────────────────────────────────────────────────────
+
+    private fun pushHistory() {
+        history.addLast(
+            StateSnapshot(
+                pointsA, pointsB, gamesA, gamesB, setsA, setsB,
+                isDeuce, advantageTeam, isTieBreak, isSuperTieBreak, lastGameWinner
+            )
+        )
+        if (history.size > MAX_HISTORY) history.removeFirst()
+    }
+
+    private fun restoreSnapshot(snap: StateSnapshot) {
+        pointsA = snap.pointsA
+        pointsB = snap.pointsB
+        gamesA = snap.gamesA
+        gamesB = snap.gamesB
+        setsA = snap.setsA
+        setsB = snap.setsB
+        isDeuce = snap.isDeuce
+        advantageTeam = snap.advantageTeam
+        isTieBreak = snap.isTieBreak
+        isSuperTieBreak = snap.isSuperTieBreak
+        lastGameWinner = snap.lastGameWinner
+    }
+
+    // ── Display ────────────────────────────────────────────────────────────
 
     @Synchronized
     fun getScoreDisplayA(): String {
@@ -83,7 +131,7 @@ class ScoreState(private val config: ConfigManager) {
         if (isSuperTieBreak) {
             val myPts = if (team == 'A') pointsA else pointsB
             val opPts = if (team == 'A') pointsB else pointsA
-            return myPts >= config.superTieBreakTarget - 1 && myPts - opPts >= 1 // Rough logic for 'point away'
+            return myPts >= config.superTieBreakTarget - 1 && myPts - opPts >= 1
         }
         if (isTieBreak) {
             val target = config.tieBreakTarget
@@ -92,11 +140,8 @@ class ScoreState(private val config: ConfigManager) {
             val diffReq = if (config.tieBreakWinBy2) 2 else 1
             return myPts >= target - 1 && (myPts + 1) - opPts >= diffReq
         }
-        
-        if (config.useGoldenPoint && isDeuce) return true // Next point wins
-        
+        if (config.useGoldenPoint && isDeuce) return true
         if (isDeuce) return advantageTeam == team
-        
         val myPts = if (team == 'A') pointsA else pointsB
         val opPts = if (team == 'A') pointsB else pointsA
         return myPts == 3 && opPts < 3
@@ -104,18 +149,15 @@ class ScoreState(private val config: ConfigManager) {
 
     fun isSetPoint(team: Char): Boolean {
         if (!isGamePoint(team)) return false
-        if (isSuperTieBreak) return true // Super tie-break wins the match/set
-        
+        if (isSuperTieBreak) return true
         val myGames = if (team == 'A') gamesA else gamesB
         val opGames = if (team == 'A') gamesB else gamesA
-        
-        if (isTieBreak) return true // Winning tie-break wins the set
-        
+        if (isTieBreak) return true
         val nextGames = myGames + 1
-        if (config.winBy2Games) {
-            return nextGames >= config.gamesToWinSet && nextGames - opGames >= 2
+        return if (config.winBy2Games) {
+            nextGames >= config.gamesToWinSet && nextGames - opGames >= 2
         } else {
-            return nextGames >= config.gamesToWinSet
+            nextGames >= config.gamesToWinSet
         }
     }
 
@@ -125,8 +167,11 @@ class ScoreState(private val config: ConfigManager) {
         return (mySets + 1) >= config.setsToWinMatch
     }
 
+    // ── Mutations ──────────────────────────────────────────────────────────
+
     @Synchronized
     fun addPoint(team: Char) {
+        pushHistory() // Save state before any mutation
         lastGameWinner = null
         if (isSuperTieBreak) {
             handleTieBreakPoint(team, config.superTieBreakTarget)
@@ -138,14 +183,74 @@ class ScoreState(private val config: ConfigManager) {
         onScoreChanged?.invoke()
     }
 
+    /**
+     * Undo the last scored point, restoring the full game state exactly.
+     * Works across game and set boundaries.
+     * @return true if there was a state to undo, false if history is empty
+     */
+    @Synchronized
+    fun undo(): Boolean {
+        if (history.isEmpty()) return false
+        restoreSnapshot(history.removeLast())
+        onScoreChanged?.invoke()
+        return true
+    }
+
+    /**
+     * Direct point removal (for BLE remote fine-tuning).
+     * Only adjusts within current game — does NOT cross game/set boundaries.
+     * For full accurate undo use undo().
+     */
+    @Synchronized
+    fun removePoint(team: Char) {
+        // V2.3: If we are at the start of a game (0-0) and the user wants to "minus" a score,
+        // it means they likely want to undo the point that ended the last game.
+        if (pointsA == 0 && pointsB == 0 && hasHistory()) {
+            undo()
+            return
+        }
+
+        if (isTieBreak || isSuperTieBreak) {
+            if (team == 'A' && pointsA > 0) pointsA--
+            if (team == 'B' && pointsB > 0) pointsB--
+        } else {
+            if (isDeuce) {
+                if (advantageTeam != null) {
+                    advantageTeam = null
+                } else {
+                    isDeuce = false
+                    if (team == 'A') { pointsA = 2; pointsB = 3 }
+                    else { pointsA = 3; pointsB = 2 }
+                }
+            } else {
+                if (team == 'A' && pointsA > 0) pointsA--
+                if (team == 'B' && pointsB > 0) pointsB--
+            }
+        }
+        onScoreChanged?.invoke()
+    }
+
+    @Synchronized
+    fun reset() {
+        history.clear()
+        pointsA = 0; pointsB = 0
+        gamesA = 0; gamesB = 0
+        setsA = 0; setsB = 0
+        isDeuce = false; advantageTeam = null
+        isTieBreak = false; isSuperTieBreak = false
+        lastGameWinner = null
+        onScoreChanged?.invoke()
+    }
+
+    fun hasHistory(): Boolean = history.isNotEmpty()
+
+    // ── Internal helpers ───────────────────────────────────────────────────
+
     private fun handleTieBreakPoint(team: Char, targetPoints: Int) {
         if (team == 'A') pointsA++ else pointsB++
-
         val myPts = if (team == 'A') pointsA else pointsB
         val opPts = if (team == 'A') pointsB else pointsA
-        
         val diffReq = if (config.tieBreakWinBy2) 2 else 1
-        
         if (myPts >= targetPoints && (myPts - opPts) >= diffReq) {
             winGame(team)
         }
@@ -154,17 +259,16 @@ class ScoreState(private val config: ConfigManager) {
     private fun handleStandardPoint(team: Char) {
         if (isDeuce) {
             if (config.useGoldenPoint) {
-                winGame(team) // Golden point won
+                winGame(team)
             } else {
                 when {
                     advantageTeam == null -> advantageTeam = team
                     advantageTeam == team -> winGame(team)
-                    else -> advantageTeam = null // Back to deuce
+                    else -> advantageTeam = null
                 }
             }
             return
         }
-
         if (team == 'A') {
             if (pointsA < 3) {
                 pointsA++
@@ -185,16 +289,13 @@ class ScoreState(private val config: ConfigManager) {
     private fun winGame(team: Char) {
         lastGameWinner = team
         if (team == 'A') gamesA++ else gamesB++
-        
         val myGames = if (team == 'A') gamesA else gamesB
         val opGames = if (team == 'A') gamesB else gamesA
-
         val setWon = if (config.winBy2Games) {
             myGames >= config.gamesToWinSet && (myGames - opGames) >= 2
         } else {
             myGames >= config.gamesToWinSet
         }
-
         if (setWon) {
             winSet(team)
         } else {
@@ -205,36 +306,25 @@ class ScoreState(private val config: ConfigManager) {
 
     private fun winSet(team: Char) {
         if (team == 'A') setsA++ else setsB++
-        
-        // Reset Set State
         gamesA = 0
         gamesB = 0
         resetPointState()
-        
         checkSuperTieBreak()
     }
 
     private fun checkTieBreak() {
-        if (!config.useTieBreak) return
-        if (gamesA == config.tieBreakAt && gamesB == config.tieBreakAt) {
-            isTieBreak = true
-        } else {
-            isTieBreak = false
-        }
+        isTieBreak = config.useTieBreak &&
+                gamesA == config.tieBreakAt && gamesB == config.tieBreakAt
     }
-    
+
     private fun checkSuperTieBreak() {
-        if (!config.finalSetSuperTieBreak) return
-        
-        // Ex: Best of 3 (setsToWinMatch = 2). If both teams have 1 set, next set is final set.
-        val setsPlayed = setsA + setsB
-        val totalSetsPossible = config.setsToWinMatch * 2 - 1 // best of 3 -> max 3 sets.
-        
-        if (setsPlayed == totalSetsPossible - 1) { // 1-1 in best of 3
-            isSuperTieBreak = true
-        } else {
+        if (!config.finalSetSuperTieBreak) {
             isSuperTieBreak = false
+            return
         }
+        val setsPlayed = setsA + setsB
+        val totalSetsPossible = config.setsToWinMatch * 2 - 1
+        isSuperTieBreak = setsPlayed == totalSetsPossible - 1
     }
 
     private fun resetPointState() {
@@ -247,41 +337,6 @@ class ScoreState(private val config: ConfigManager) {
     }
 
     @Synchronized
-    fun removePoint(team: Char) {
-        // Simple undo logic
-        lastGameWinner = null
-        if (isTieBreak || isSuperTieBreak) {
-            if (team == 'A' && pointsA > 0) pointsA--
-            if (team == 'B' && pointsB > 0) pointsB--
-        } else {
-            if (isDeuce) {
-                if (advantageTeam != null) {
-                    advantageTeam = null 
-                } else {
-                    isDeuce = false
-                    if (team == 'A') { pointsA = 2; pointsB = 3 }
-                    else { pointsA = 3; pointsB = 2 }
-                }
-            } else {
-                if (team == 'A' && pointsA > 0) pointsA--
-                if (team == 'B' && pointsB > 0) pointsB--
-            }
-        }
-        onScoreChanged?.invoke()
-    }
-
-    @Synchronized
-    fun reset() {
-        pointsA = 0; pointsB = 0
-        gamesA = 0; gamesB = 0
-        setsA = 0; setsB = 0
-        isDeuce = false; advantageTeam = null
-        isTieBreak = false; isSuperTieBreak = false
-        lastGameWinner = null
-        onScoreChanged?.invoke()
-    }
-
-    @Synchronized
     fun toMap(): Map<String, Any?> = mapOf(
         "scoreA" to getScoreDisplayA(),
         "scoreB" to getScoreDisplayB(),
@@ -291,7 +346,7 @@ class ScoreState(private val config: ConfigManager) {
         "setsB" to setsB,
         "isDeuce" to isDeuce,
         "advantage" to advantageTeam?.toString(),
-        "status" to getStatusText()
+        "status" to getStatusText(),
+        "canUndo" to hasHistory()
     )
 }
-

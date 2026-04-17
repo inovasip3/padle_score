@@ -8,32 +8,53 @@ import fi.iki.elonen.NanoHTTPD
  * Designed for <50ms response time.
  */
 class HttpCommandServer(
+    hostname: String?,
     port: Int,
     private val scoreState: ScoreState,
-    private val config: ConfigManager, // Added for config management
+    private val config: ConfigManager,
+    private val historyManager: HistoryManager,
+    private val remoteToken: String,   // Random per-session token for secure access
     private val onCommand: (String) -> Unit
-) : NanoHTTPD(port) {
+) : NanoHTTPD(hostname, port) {
+
+    // Shared learning state: set by web remote, consumed by MainActivity.dispatchKeyEvent
+    // null = not learning; 'A' or 'B' = waiting for next BLE key press
+    @Volatile var pendingAssignTeam: Char? = null
+    @Volatile var lastAssignSuccess: String = ""  // "A", "B", or "" for none
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
         val params = session.parms
 
         return when {
-            uri == "/" || uri == "/index.html" -> serveWebUI()
+            // Secure token path – only this URL serves the Web UI
+            uri == "/$remoteToken" -> serveWebUI()
+            // API endpoints – accessible to the already-loaded page
             uri == "/cmd" -> handleCommand(params)
             uri == "/status" -> handleStatus()
             uri == "/config" -> handleConfig(params)
             uri == "/upload" && session.method == Method.POST -> handleUpload(session)
+            uri == "/assign_remote" -> handleAssignRemote(params)
+            uri == "/assign_status" -> handleAssignStatus()
             uri == "/ping" -> newFixedLengthResponse(
                 Response.Status.OK, "application/json",
                 """{"ok":true,"msg":"pong"}"""
+            )
+            uri == "/clear_history" -> {
+                historyManager.clearHistory()
+                newFixedLengthResponse(Response.Status.OK, "application/json", """{"ok":true}""")
+            }
+            // Bare root and anything else -> Forbidden / Not Found
+            uri == "/" || uri == "/index.html" -> newFixedLengthResponse(
+                Response.Status.FORBIDDEN, "text/plain",
+                "Access Denied. Scan the QR code on the scoreboard to connect."
             )
             else -> newFixedLengthResponse(
                 Response.Status.NOT_FOUND, "application/json",
                 """{"ok":false,"error":"not found"}"""
             )
         }.also { response ->
-            // CORS headers for flexibility
+            // Revert to stable headers for legacy Android Hotspot
             response.addHeader("Access-Control-Allow-Origin", "*")
             response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             response.addHeader("Cache-Control", "no-cache")
@@ -46,7 +67,7 @@ class HttpCommandServer(
             """{"ok":false,"error":"missing parameter 'c'"}"""
         )
 
-        val validCommands = setOf("A_PLUS", "B_PLUS", "A_MINUS", "B_MINUS", "RESET")
+        val validCommands = setOf("A_PLUS", "B_PLUS", "A_MINUS", "B_MINUS", "RESET", "RESET_WITH_PHOTOS")
         if (cmd !in validCommands) {
             return newFixedLengthResponse(
                 Response.Status.BAD_REQUEST, "application/json",
@@ -62,8 +83,16 @@ class HttpCommandServer(
             "B_MINUS" -> scoreState.removePoint('B')
             "RESET" -> {
                 scoreState.reset()
+                onCommand("CONFIG_UPDATE")
+            }
+            "RESET_WITH_PHOTOS" -> {
+                scoreState.reset()
                 config.teamAName = ConfigManager.DEFAULT_TEAM_A
                 config.teamBName = ConfigManager.DEFAULT_TEAM_B
+                val fileA = java.io.File(config.context.filesDir, "team_a_photo.jpg")
+                val fileB = java.io.File(config.context.filesDir, "team_b_photo.jpg")
+                if(fileA.exists()) fileA.delete()
+                if(fileB.exists()) fileB.delete()
                 onCommand("CONFIG_UPDATE")
             }
         }
@@ -72,19 +101,47 @@ class HttpCommandServer(
         onCommand(cmd)
 
         // Return current state
-        val json = buildJsonResponse(getFullState())
         return newFixedLengthResponse(
-            Response.Status.OK, "application/json", json
+            Response.Status.OK, "application/json", buildJsonResponse(getFullState())
         )
     }
 
     private fun handleStatus(): Response {
-        val json = buildJsonResponse(getFullState())
         return newFixedLengthResponse(
-            Response.Status.OK, "application/json", json
+            Response.Status.OK, "application/json", buildJsonResponse(getFullState())
         )
     }
-    
+
+    private fun handleAssignRemote(params: Map<String, String>): Response {
+        val team = params["team"]?.uppercase() ?: "A"
+        if (team != "A" && team != "B") {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, "application/json",
+                """{"ok":false,"error":"team must be A or B"}"""
+            )
+        }
+        // Signal MainActivity to enter learning mode
+        lastAssignSuccess = ""
+        pendingAssignTeam = team[0] // 'A' or 'B'
+        onCommand("ASSIGN_REMOTE_${team}")
+        return newFixedLengthResponse(
+            Response.Status.OK, "application/json",
+            """{"ok":true,"learning":true,"team":"$team"}"""
+        )
+    }
+
+    private fun handleAssignStatus(): Response {
+        val learning = pendingAssignTeam != null
+        val success = lastAssignSuccess
+        // Describe assigned remote descriptors (shortened)
+        val aDesc = if (config.remoteADesc.isEmpty()) "" else config.remoteADesc.take(12)
+        val bDesc = if (config.remoteBDesc.isEmpty()) "" else config.remoteBDesc.take(12)
+        return newFixedLengthResponse(
+            Response.Status.OK, "application/json",
+            """{"ok":true,"learning":$learning,"success":"$success","remoteADesc":"$aDesc","remoteBDesc":"$bDesc"}"""
+        )
+    }
+
     private fun handleUpload(session: IHTTPSession): Response {
         try {
             val files = mutableMapOf<String, String>()
@@ -140,28 +197,76 @@ class HttpCommandServer(
     }
 
     private fun handleConfig(params: Map<String, String>): Response {
-        val teamA = params["teamA"]
-        if (teamA != null) config.teamAName = teamA
+        val pinAttempt = params["pin"]
+        if (pinAttempt != null) {
+            val ok = (pinAttempt == config.pin)
+            return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"ok\":$ok}")
+        }
         
-        val teamB = params["teamB"]
-        if (teamB != null) config.teamBName = teamB
+        config.saveBatch {
+            params["teamA"]?.let { putString(ConfigManager.KEY_TEAM_A_NAME, it) }
+            params["teamB"]?.let { putString(ConfigManager.KEY_TEAM_B_NAME, it) }
+            params["photoSize"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_PHOTO_SIZE, it) }
+            params["photoYPos"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_PHOTO_Y_POS, it) }
+            params["photoXPosA"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_PHOTO_X_POS_A, it) }
+            params["photoXPosB"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_PHOTO_X_POS_B, it) }
+            params["voiceRef"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_VOICE_REF, it) }
+            params["scoringPreset"]?.let { putString(ConfigManager.KEY_SCORING_PRESET, it) }
+            params["soundEnabled"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_SOUND_ENABLED, it) }
+            params["enablePhotos"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_PHOTOS, it) }
+            params["enableApplause"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_APPLAUSE, it) }
+            
+            // Rules
+            params["useGoldenPoint"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_USE_GOLDEN_POINT, it) }
+            params["gamesToWinSet"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_GAMES_TO_WIN_SET, it) }
+            params["winBy2Games"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_WIN_BY_2_GAMES, it) }
+            params["useTieBreak"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_USE_TIE_BREAK, it) }
+            params["tieBreakAt"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_TIE_BREAK_AT, it) }
+            params["tieBreakTarget"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_TIE_BREAK_TARGET, it) }
+            params["tieBreakWinBy2"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_TIE_BREAK_WIN_BY_2, it) }
+            params["setsToWinMatch"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_SETS_TO_WIN_MATCH, it) }
+            params["finalSetSuperTieBreak"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_FINAL_SET_SUPER_TB, it) }
+            params["superTieBreakTarget"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_SUPER_TB_TARGET, it) }
+            
+            // Visuals
+            params["colorA"]?.let { try { putInt(ConfigManager.KEY_COLOR_A, android.graphics.Color.parseColor(it)) } catch(e:Exception){} }
+            params["colorB"]?.let { try { putInt(ConfigManager.KEY_COLOR_B, android.graphics.Color.parseColor(it)) } catch(e:Exception){} }
+            params["fontScale"]?.toFloatOrNull()?.let { putFloat(ConfigManager.KEY_FONT_SCALE, it) }
+            params["fontTypeface"]?.let { putString(ConfigManager.KEY_FONT_TYPEFACE, it) }
+            params["enableWinEffect"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_WIN_EFFECT, it) }
+            
+            // Audio Additions
+            params["useLoveForZero"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_USE_LOVE_FOR_ZERO, it) }
+            
+            // Remote Control
+            params["enableHttpServer"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_HTTP, it) }
+            params["enableBleHid"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_BLE_HID, it) }
+            params["enableShutterRemote"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ENABLE_SHUTTER_REMOTE, it) }
+            params["keyTeamAPlus"]?.let { putString(ConfigManager.KEY_KB_TEAM_A_PLUS, it.take(1)) }
+            params["keyTeamAMinus"]?.let { putString(ConfigManager.KEY_KB_TEAM_A_MINUS, it.take(1)) }
+            params["keyTeamBPlus"]?.let { putString(ConfigManager.KEY_KB_TEAM_B_PLUS, it.take(1)) }
+            params["keyTeamBMinus"]?.let { putString(ConfigManager.KEY_KB_TEAM_B_MINUS, it.take(1)) }
+            params["keyReset"]?.let { putString(ConfigManager.KEY_KB_RESET, it.take(1)) }
+            
+            // V2.3 Remote Actions
+            params["remoteMode"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_REMOTE_MODE, it) }
+            params["remoteSwapMod2"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_REMOTE_SWP_MOD2, it) }
+            params["remoteResetEnabled"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_REMOTE_RESET_ENABLED, it) }
+            params["remoteLongPressMs"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_REMOTE_LONG_PRESS_MS, it) }
+            params["remoteDualPressMs"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_REMOTE_DUAL_PRESS_MS, it) }
+            
+            // System
+            params["serverPort"]?.toIntOrNull()?.let { putInt(ConfigManager.KEY_SERVER_PORT, it) }
+            params["showDebugMsg"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_SHOW_DEBUG_MSG, it) }
+            params["newPin"]?.let { if (it.isNotBlank()) putString(ConfigManager.KEY_PIN, it) }
+            params["customThemeJson"]?.let { putString(ConfigManager.KEY_CUSTOM_THEME_JSON, it) }
+            params["allowUserUploadPhoto"]?.toBooleanStrictOrNull()?.let { putBoolean(ConfigManager.KEY_ALLOW_USER_UPLOAD_PHOTO, it) }
+        }
 
-        val pSize = params["photoSize"]?.toIntOrNull()
-        if (pSize != null) config.photoSize = pSize
-
-        val pY = params["photoYPos"]?.toIntOrNull()
-        if (pY != null) config.photoYPos = pY
+        val nonConfigKeys = listOf("pin")
+        val hasChanges = params.keys.any { it !in nonConfigKeys }
         
-        val pXA = params["photoXPosA"]?.toIntOrNull()
-        if (pXA != null) config.photoXPosA = pXA
-        
-        val pXB = params["photoXPosB"]?.toIntOrNull()
-        if (pXB != null) config.photoXPosB = pXB
-
-        val pVoice = params["voiceRef"]?.toBoolean()
-        if (pVoice != null) config.enableVoiceRef = pVoice
-        
-        if (teamA != null || teamB != null || pSize != null || pY != null || pXA != null || pXB != null || pVoice != null) {
+        if (hasChanges) {
             onCommand("CONFIG_UPDATE")
         }
         
@@ -178,18 +283,84 @@ class HttpCommandServer(
         state["photoXPosA"] = config.photoXPosA
         state["photoXPosB"] = config.photoXPosB
         state["voiceRef"] = config.enableVoiceRef
+        state["scoringPreset"] = config.scoringPreset
+        state["soundEnabled"] = config.soundEnabled
+        state["enablePhotos"] = config.enablePhotos
+        
+        // Rules
+        state["useGoldenPoint"] = config.useGoldenPoint
+        state["gamesToWinSet"] = config.gamesToWinSet
+        state["winBy2Games"] = config.winBy2Games
+        state["useTieBreak"] = config.useTieBreak
+        state["tieBreakAt"] = config.tieBreakAt
+        state["tieBreakTarget"] = config.tieBreakTarget
+        state["tieBreakWinBy2"] = config.tieBreakWinBy2
+        state["setsToWinMatch"] = config.setsToWinMatch
+        state["finalSetSuperTieBreak"] = config.finalSetSuperTieBreak
+        state["superTieBreakTarget"] = config.superTieBreakTarget
+        
+        // Visuals
+        state["colorA"] = String.format("#%06X", 0xFFFFFF and config.colorA)
+        state["colorB"] = String.format("#%06X", 0xFFFFFF and config.colorB)
+        state["fontScale"] = config.fontScale
+        state["fontTypeface"] = config.fontTypeface
+        state["enableWinEffect"] = config.enableWinEffect
+        
+        // Audio Additions
+        state["useLoveForZero"] = config.useLoveForZero
+        
+        // Remote Control
+        state["enableHttpServer"] = config.enableHttpServer
+        state["enableBleHid"] = config.enableBleHid
+        state["enableShutterRemote"] = config.enableShutterRemote
+        state["keyTeamAPlus"] = config.keyTeamAPlus
+        state["keyTeamAMinus"] = config.keyTeamAMinus
+        state["keyTeamBPlus"] = config.keyTeamBPlus
+        state["keyTeamBMinus"] = config.keyTeamBMinus
+        state["keyReset"] = config.keyReset
+        
+        // V2.3 Remote Control Additions
+        state["remoteMode"] = config.remoteMode
+        state["remoteSwapMod2"] = config.remoteSwapMod2
+        state["remoteResetEnabled"] = config.remoteResetEnabled
+        state["remoteLongPressMs"] = config.remoteLongPressMs
+        state["remoteDualPressMs"] = config.remoteDualPressMs
+        state["remoteADesc"] = config.remoteADesc
+        state["remoteBDesc"] = config.remoteBDesc
+        
+        // Audio Additions
+        state["enableApplause"] = config.enableApplause
+        
+        // System
+        state["serverPort"] = config.serverPort
+        state["customThemeJson"] = config.customThemeJson
+        state["allowUserUploadPhoto"] = config.allowUserUploadPhoto
+
+        state["history"] = historyManager.getHistory()
         return state
     }
 
     private fun buildJsonResponse(state: Map<String, Any?>): String {
+        // Deterministic JSON building for simple IoT clients (like ESP8266)
         val sb = StringBuilder()
         sb.append("""{"ok":true,"state":{""")
         val entries = state.entries.toList()
         entries.forEachIndexed { index, (key, value) ->
             sb.append("\"$key\":")
             when (value) {
-                is String -> sb.append("\"$value\"")
+                is String -> {
+                    // History is already a JSON array string, don't quote it
+                    if (key == "history") {
+                        sb.append(value)
+                    } else {
+                        // Very basic escaping for internal quotes just in case
+                        val escaped = value.replace("\"", "\\\"")
+                        sb.append("\"$escaped\"")
+                    }
+                }
                 is Int -> sb.append(value)
+                is Float -> sb.append(value)
+                is Double -> sb.append(value)
                 is Boolean -> sb.append(value)
                 null -> sb.append("null")
                 else -> sb.append("\"$value\"")
@@ -201,319 +372,23 @@ class HttpCommandServer(
     }
     
     private fun serveWebUI(): Response {
-        val html = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, touch-action=none">
-                <title>Remote Score Editor</title>
-                <style>
-                    body {
-                        background-color: #000;
-                        color: #FFF;
-                        font-family: monospace;
-                        margin: 0;
-                        padding: 0;
-                        display: flex;
-                        flex-direction: column;
-                        height: 100vh;
-                        user-select: none;
-                        -webkit-user-select: none;
-                        -webkit-touch-callout: none;
-                    }
-                    .header {
-                        display: flex;
-                        justify-content: space-around;
-                        padding: 10px;
-                        font-size: 24px;
-                        font-weight: bold;
-                    }
-                    .team-name {
-                        cursor: pointer;
-                        padding: 10px;
-                    }
-                    .upload-btn {
-                        font-size: 14px;
-                        color: #bbb;
-                        cursor: pointer;
-                        display: block;
-                        text-align: center;
-                        margin-top: -10px;
-                    }
-                    .team-a { color: #00FF66; }
-                    .team-b { color: #FFA500; }
-                    .scores {
-                        display: flex;
-                        flex: 1;
-                        justify-content: space-around;
-                        align-items: center;
-                    }
-                    .score-panel {
-                        flex: 1;
-                        display: flex;
-                        flex-direction: column;
-                        align-items: center;
-                        justify-content: center;
-                        height: 100%;
-                    }
-                    .score {
-                        font-size: 30vw;
-                        font-weight: bold;
-                    }
-                    .sets {
-                        font-size: 8vw;
-                        color: #888;
-                    }
-                    .status {
-                        position: absolute;
-                        bottom: 12%;
-                        width: 100%;
-                        text-align: center;
-                        font-size: 24px;
-                    }
-                    .photo-controls {
-                        background: #1a1a1a;
-                        padding: 15px;
-                        border-top: 1px solid #444;
-                        position: fixed;
-                        bottom: 0;
-                        width: 100%;
-                        display: none;
-                        box-sizing: border-box;
-                        z-index: 1000;
-                    }
-                    .photo-controls.visible { display: block; }
-                    .control-row {
-                        display: flex;
-                        align-items: center;
-                        margin-bottom: 12px;
-                    }
-                    .control-row label { flex: 1; font-size: 13px; color: #888; }
-                    .control-row input { flex: 2; margin-left: 10px; }
-                    .toggle-ctrl {
-                        position: fixed;
-                        bottom: 10px;
-                        right: 10px;
-                        background: #444;
-                        padding: 10px;
-                        border-radius: 50%;
-                        width: 40px;
-                        height: 40px;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        z-index: 1001;
-                        font-size: 20px;
-                        cursor: pointer;
-                        box-shadow: 0 0 10px rgba(0,0,0,0.5);
-                    }
-                    .save-btn {
-                       background: #00FF66;
-                       color: #000;
-                       border: none;
-                       padding: 8px;
-                       width: 100%;
-                       font-weight: bold;
-                       border-radius: 4px;
-                       cursor: pointer;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="toggle-ctrl" onclick="toggleControls()">⚙️</div>
-                <div class="header">
-                    <div>
-                        <div id="nameA" class="team-name team-a">TEAM A</div>
-                        <label class="upload-btn" for="photoA">📸 Photo A</label>
-                        <input type="file" id="photoA" accept="image/*" style="display:none" onchange="uploadPhoto('A', this)">
-                    </div>
-                    <div>
-                        <div id="nameB" class="team-name team-b">TEAM B</div>
-                        <label class="upload-btn" for="photoB">📸 Photo B</label>
-                        <input type="file" id="photoB" accept="image/*" style="display:none" onchange="uploadPhoto('B', this)">
-                    </div>
-                </div>
-                <div class="scores" id="scoresArea">
-                    <div class="score-panel" id="panelA">
-                        <div class="score team-a" id="scoreA">0</div>
-                        <div class="sets">SETS: <span id="setsA">0</span></div>
-                    </div>
-                    <div class="score-panel" id="panelB">
-                        <div class="score team-b" id="scoreB">0</div>
-                        <div class="sets">SETS: <span id="setsB">0</span></div>
-                    </div>
-                </div>
-                <div class="status" id="status"></div>
-                
-                <div class="photo-controls" id="photoControls">
-                    <div class="control-row">
-                        <label>🗣️ Voice Umpire</label>
-                        <input type="checkbox" id="voiceToggle" style="width:20px;height:20px" onchange="updatePosConfig()">
-                    </div>
-                    <div class="control-row">
-                        <label>📸 Photo Size</label>
-                        <input type="range" id="sizeRange" min="10" max="60" value="25" oninput="updatePosConfig()">
-                    </div>
-                    <div class="control-row">
-                        <label>↕️ Photo Y-Pos</label>
-                        <input type="range" id="yRange" min="0" max="100" value="35" oninput="updatePosConfig()">
-                    </div>
-                    <div class="control-row">
-                        <label>↔️ Team A X-Pos</label>
-                        <input type="range" id="xRangeA" min="-30" max="30" value="0" oninput="updatePosConfig()">
-                    </div>
-                    <div class="control-row">
-                        <label>↔️ Team B X-Pos</label>
-                        <input type="range" id="xRangeB" min="-30" max="30" value="0" oninput="updatePosConfig()">
-                    </div>
-                    <button class="save-btn" onclick="savePositions()">SAVE AS DEFAULT</button>
-                </div>
+        var html = ""
+        try {
+            html = config.context.assets.open("remote.html").bufferedReader().use { it.readText() }
             
-                <script>
-                    let pointers = 0;
-                    let lastDownTime = 0;
-                    let touchTimer = null;
-                    let isLongPress = false;
-                    const LONG_PRESS_MS = 600;
-                    let lastTapTime = 0;
-                    const TAP_DEBOUNCE_MS = 300;
+            // Inject App Version
+            val versionName = try {
+                @Suppress("DEPRECATION")
+                config.context.packageManager.getPackageInfo(config.context.packageName, 0).versionName
+            } catch (e: Exception) {
+                "2.3.0"
+            }
+            html = html.replace("{{APP_VERSION}}", versionName)
             
-                    // Fetch state
-                    async function fetchStatus() {
-                        try {
-                            const res = await fetch('/status');
-                            const data = await res.json();
-                            if (data.ok) updateUI(data.state);
-                        } catch (e) {}
-                    }
-                    
-                    async function sendCommand(cmd) {
-                        try {
-                            const res = await fetch('/cmd?c=' + cmd);
-                            const data = await res.json();
-                            if (data.ok) updateUI(data.state);
-                        } catch (e) {}
-                    }
-                    
-                    async function updateConfig(team, newName) {
-                        try {
-                            const res = await fetch('/config?' + team + '=' + encodeURIComponent(newName));
-                            const data = await res.json();
-                            if (data.ok) updateUI(data.state);
-                        } catch (e) {}
-                    }
-            
-                    function updateUI(state) {
-                        document.getElementById('scoreA').innerText = state.scoreA;
-                        document.getElementById('scoreB').innerText = state.scoreB;
-                        document.getElementById('setsA').innerText = state.setsA;
-                        document.getElementById('setsB').innerText = state.setsB;
-                        document.getElementById('status').innerText = state.status || "";
-                        document.getElementById('nameA').innerText = state.teamA;
-                        document.getElementById('nameB').innerText = state.teamB;
-                        
-                        // Sync sliders (only if not currently being touched)
-                        if(!window.isDragging) {
-                            document.getElementById('sizeRange').value = state.photoSize;
-                            document.getElementById('yRange').value = state.photoYPos;
-                            document.getElementById('xRangeA').value = state.photoXPosA;
-                            document.getElementById('xRangeB').value = state.photoXPosB;
-                            document.getElementById('voiceToggle').checked = state.voiceRef;
-                        }
-                    }
-            
-                    setInterval(fetchStatus, 1000);
-                    fetchStatus();
-                    
-                    const setupDrag = (id) => {
-                        document.getElementById(id).ontouchstart = () => window.isDragging = true;
-                        document.getElementById(id).ontouchend = () => window.isDragging = false;
-                    }
-                    setupDrag('sizeRange'); setupDrag('yRange'); setupDrag('xRangeA'); setupDrag('xRangeB');
-
-                    function toggleControls() {
-                        document.getElementById('photoControls').classList.toggle('visible');
-                    }
-
-                    async function updatePosConfig() {
-                        const size = document.getElementById('sizeRange').value;
-                        const y = document.getElementById('yRange').value;
-                        const xA = document.getElementById('xRangeA').value;
-                        const xB = document.getElementById('xRangeB').value;
-                        const voice = document.getElementById('voiceToggle').checked;
-                        try {
-                            const res = await fetch(`/config?photoSize=${'$'}{size}&photoYPos=${'$'}{y}&photoXPosA=${'$'}{xA}&photoXPosB=${'$'}{xB}&voiceRef=${'$'}{voice}`);
-                            const data = await res.json();
-                        } catch(e) {}
-                    }
-                    
-                    async function savePositions() {
-                        alert('Positions saved successfully!');
-                        // Real-time updates already saved to config on tablet via updatePosConfig
-                    }
-                    
-                    document.getElementById('nameA').onclick = () => {
-                        let name = prompt("Enter Name for Team A", document.getElementById('nameA').innerText);
-                        if (name) updateConfig('teamA', name);
-                    };
-                    document.getElementById('nameB').onclick = () => {
-                        let name = prompt("Enter Name for Team B", document.getElementById('nameB').innerText);
-                        if (name) updateConfig('teamB', name);
-                    };
-                    
-                    async function uploadPhoto(team, input) {
-                        if (!input.files || input.files.length === 0) return;
-                        let formData = new FormData();
-                        formData.append('file', input.files[0]);
-                        try {
-                            const res = await fetch('/upload?team=' + team, { method: 'POST', body: formData });
-                            const data = await res.json();
-                            if(data.ok) alert('Photo uploaded successfully for Team ' + team);
-                        } catch(e) {
-                            alert('Upload failed');
-                        }
-                    }
-                    
-                    const handleTouch = (targetIds, cmdPlus, cmdMinus) => {
-                        targetIds.forEach(id => {
-                            const el = document.getElementById(id);
-                            el.addEventListener('touchstart', (e) => {
-                                pointers = e.touches.length;
-                                if (pointers >= 2) {
-                                    clearTimeout(touchTimer);
-                                    touchTimer = setTimeout(() => { sendCommand('RESET'); isLongPress = true; }, 1000);
-                                    return;
-                                }
-                                e.preventDefault();
-                                isLongPress = false;
-                                clearTimeout(touchTimer);
-                                touchTimer = setTimeout(() => {
-                                    isLongPress = true;
-                                    sendCommand(cmdMinus);
-                                }, LONG_PRESS_MS);
-                            }, {passive: false});
-                            
-                            el.addEventListener('touchend', (e) => {
-                                e.preventDefault();
-                                clearTimeout(touchTimer);
-                                if (!isLongPress && pointers < 2) {
-                                    let now = Date.now();
-                                    if (now - lastTapTime > TAP_DEBOUNCE_MS) {
-                                        lastTapTime = now;
-                                        sendCommand(cmdPlus);
-                                    }
-                                }
-                            }, {passive: false});
-                        });
-                    };
-                    
-                    handleTouch(['panelA', 'scoreA'], 'A_PLUS', 'A_MINUS');
-                    handleTouch(['panelB', 'scoreB'], 'B_PLUS', 'B_MINUS');
-                </script>
-            </body>
-            </html>
-        """.trimIndent()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "Failed to load remote.html")
+        }
         
         return newFixedLengthResponse(Response.Status.OK, "text/html", html)
     }
